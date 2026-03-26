@@ -1,0 +1,221 @@
+[
+  {
+    "id": "a1",
+    "category": "challenge",
+    "question": "RAG 的主要挑战是什么？",
+    "expected_titles": [
+      "Retrieval-Augmented Generation Challenges",
+      "Retrieval-Augmented Generation for Large Language Models: A Survey"
+    ],
+    "expected_points": [
+      "检索噪声或不相关段落",
+      "知识冲突或参数记忆与外部证据不一致",
+      "上下文窗口限制",
+      "引用可靠性或可追溯性",
+      "知识新鲜度或更新问题"
+    ],
+    "retrieved_titles": [
+      "Retrieval-Augmented Generation Challenges",
+      "Retrieval-Augmented Generation for Large Language Models: A Survey",
+      "RAG-Fusion: a New Take on Retrieval-Augmented Generation"
+    ],
+    "answer": "根据提供的材料，RAG（检索增强生成）面临的主要挑战包括以下几个方面：\n\n1.  **检索噪声 (Retrieval noise)**：检索器可能会返回不相关的段落 [1]。\n2.  **知识冲突 (Knowledge conflict)**：检索到的证据可能与模型内部的参数记忆相矛盾 [1]。\n3.  **上下文限制 (Context limits)**：过多的检索段落可能会超出模型的上下文窗口限制 [1]。\n4.  **引用可靠性 (Citation reliability)**：用户需要可追溯的来源，而非无支持的答案 [1]。\n5.  **新鲜度 (Freshness)**：外部知识库需要保持更新 [1]。\n6.  **长上下文背景下的定位**：随着大语言模型上下文窗口不断扩大（如超过 200,000 tokens），引发了关于在不受上下文限制时 RAG 是否仍有必要的讨论 [2]。\n7.  **评估框架**：需要建立稳健的框架来系统评估 RAG 模型的质量 [2]。\n8.  **检索排序优化**：传统 RAG 通常按向量距离排序文档，如何通过重排序（reranking）等方法提高检索结果的准确性、相关性和全面性是技术改进的关键 [3]。\n\n材料 [1] 最为直接地列出了 RAG 的主要挑战，材料 [2] 和 [3] 补充了关于长上下文背景下的定位、评估体系及检索排序优化方面的挑战与讨论。",
+    "title_hit": 1,
+    "correctness": 2,
+    "groundedness": 2,
+    "citation_use": 2,
+    "pass": true,
+    "reason": "模型回答完整覆盖了参考要点中的所有关键挑战，内容严格基于提供的检索证据，引用标注清晰准确。",
+    "latency_ms": 81988.78686100034
+  },
+  {
+    "id": "a2",
+    "category": "method",
+    "question": "Self-RAG 是如何利用自反思来改进生成质量的？",
+    "expected_titles": [
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection"
+    ],
+    "expected_points": [
+      "使用 reflection 或 critique 相关机制",
+      "让模型判断是否需要检索",
+      "在生成过程中自我评估或自我批判",
+      "提升 factuality、relevance 或 generation quality"
+    ],
+    "retrieved_titles": [
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection",
+      "Corrective Retrieval Augmented Generation",
+      "Retrieval-Augmented Generation for Large Language Models: A Survey"
+    ],
+    "answer": "根据提供的材料，Self-RAG 利用自反思改进生成质量的机制主要体现在以下几个方面：\n\n1.  **引入反思令牌（Reflection Tokens）**\n    Self-RAG 通过训练语言模型预测原始词汇表之外的新特殊令牌（称为反思令牌），使其学习检索、生成以及批判文本段落和自身生成内容 [1]。这些令牌允许模型对其输出进行内省（introspect）[3]。\n\n2.  **自主决策检索与批判**\n    模型利用反思令牌自主决定何时激活检索系统，无需依赖额外的分类器或自然语言推理（NLI）模型 [3]。材料中指出反思令牌包含\"retrieve\"和\"critic\"等类型，用于控制检索时机和评估 [3]。具体而言，人类评估发现 ISREL 和 ISSUP 等反思令牌的预测与人类对相关性（relevance）和支持度（support）的评估大多一致 [1]。\n\n3.  **优化生成与评分过程**\n    在检索过程中，生成器会在多个段落间进行片段级束搜索（fragment-level beam search）以推导最连贯的序列 [3]。批判分数（Critic scores）被用来更新细分分数，并且允许在推理期间调整这些权重，从而定制模型的行为 [3]。\n\n4.  **提升事实性与整体质量**\n    通过按需检索和自反思，该框架增强了大型语言模型的质量和事实性 [1]。评估显示，Self-RAG 的答案通常更合理（plausible）并由相关段落支持，在多项任务上显著优于参数更多的 LLM 或传统检索增强生成方法 [1]。",
+    "title_hit": 1,
+    "correctness": 2,
+    "groundedness": 2,
+    "citation_use": 2,
+    "pass": true,
+    "reason": "回答准确覆盖了所有关键要点（反思令牌、检索决策、自我批判、质量提升），且严格基于提供的证据并合理使用引用。",
+    "latency_ms": 73465.70787600012
+  },
+  {
+    "id": "a3",
+    "category": "method",
+    "question": "CRAG 是如何纠正检索错误的？",
+    "expected_titles": [
+      "Corrective Retrieval Augmented Generation"
+    ],
+    "expected_points": [
+      "使用 retrieval evaluator 或类似机制评估检索质量",
+      "当检索结果差时触发 corrective retrieval",
+      "执行不同的检索动作或补救流程",
+      "提升生成的鲁棒性"
+    ],
+    "retrieved_titles": [
+      "Corrective Retrieval Augmented Generation",
+      "Retrieval-Augmented Generation Challenges",
+      "Corrective Retrieval Augmented Generation"
+    ],
+    "answer": "基于给定材料，关于 CRAG 纠正检索错误的具体技术实现机制信息不足，无法完整回答其具体操作流程。材料仅提供了以下高层面的描述：\n\n1.  **校正策略设计**：CRAG 研究了检索器返回不准确结果的场景，并设计了校正策略以提高 RAG 的鲁棒性 [3]。\n2.  **自我校正与数据利用**：该方法旨在提高自动自我校正（automatic self-correction）的能力，并通过提取关键见解（key insights）和最小化非必要元素的包含，来增强对检索数据的利用 [3]。\n3.  **鲁棒性表现**：实验显示，当检索性能下降时，Self-CRAG 的生成性能下降幅度比 Self-RAG 更轻微，表明其在检索质量较低时仍具有较好的表现，间接反映了其纠正或容错能力 [1]。\n\n综上，材料仅说明了 CRAG 具有“自动自我校正”和“提取关键见解”的功能 [3]，但未披露具体的算法细节、模块结构或纠正步骤，材料不足。",
+    "title_hit": 1,
+    "correctness": 1,
+    "groundedness": 2,
+    "citation_use": 2,
+    "pass": true,
+    "reason": "模型严格依据证据总结并诚实指出材料局限，未发生幻觉，但受限于检索内容未能详述具体机制。",
+    "latency_ms": 85612.17171200042
+  },
+  {
+    "id": "a4",
+    "category": "foundation",
+    "question": "原始 RAG 论文把 RAG 描述成结合了哪两类记忆？这意味着什么？",
+    "expected_titles": [
+      "Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks"
+    ],
+    "expected_points": [
+      "参数记忆 parametric memory",
+      "非参数记忆 non-parametric memory",
+      "通过外部检索库补充模型知识",
+      "将生成模型与检索到的知识结合"
+    ],
+    "retrieved_titles": [
+      "RAG-Fusion: a New Take on Retrieval-Augmented Generation",
+      "MultiHop-RAG: Benchmarking Retrieval-Augmented Generation for Multi-Hop Queries",
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection"
+    ],
+    "answer": "基于提供的材料，无法回答原始 RAG 论文将 RAG 描述为结合了哪两类记忆以及这意味着什么。\n\n材料 [1] 主要讨论了 RAG-Fusion 与传统 RAG 聊天机器人在不同场景下的对比，未提及原始 RAG 论文关于记忆类型的定义 [1]。材料 [2] 主要介绍了针对多跳查询的 MultiHop-RAG 基准测试，仅提到 RAG 通过检索相关知识增强大语言模型，未涉及记忆分类 [2]。材料 [3] 虽然引用了 Lewis et al., 2020（通常被视为原始 RAG 论文），但仅描述 RAG 是用检索到的文本段落增强 LM 的输入空间，并没有明确说明结合了哪“两类记忆” [3]。\n\n因此，给定材料不足以回答该问题。",
+    "title_hit": 0,
+    "correctness": 0,
+    "groundedness": 2,
+    "citation_use": 2,
+    "pass": false,
+    "reason": "模型虽基于证据诚实说明无法作答且未幻觉，但未能提供问题所需的关键要点（参数与非参数记忆）。",
+    "latency_ms": 126309.18156299958
+  },
+  {
+    "id": "a5",
+    "category": "survey",
+    "question": "RAG Survey 中是如何划分 RAG 阶段或范式的？",
+    "expected_titles": [
+      "Retrieval-Augmented Generation for Large Language Models: A Survey"
+    ],
+    "expected_points": [
+      "Naive RAG",
+      "Advanced RAG",
+      "Modular RAG",
+      "说明这是一个分层或演化式分类"
+    ],
+    "retrieved_titles": [
+      "Retrieval-Augmented Generation for Large Language Models: A Survey",
+      "RAG-Fusion: a New Take on Retrieval-Augmented Generation",
+      "Adaptive-RAG: Learning to Adapt Retrieval-Augmented Large Language Models through Question Complexity"
+    ],
+    "answer": "基于给定材料，无法完整回答 RAG Survey 中 RAG 阶段或范式的具体划分全貌，材料内容不足。\n\n根据材料 [1]，该综述（Retrieval-Augmented Generation for Large Language Models: A Survey）是通过范式（paradigms）来描绘 RAG 的演变的，其中明确提到的范式包括 \"naive RAG\" [1]。然而，提供的材料内容在此处截断，未列出完整的划分列表 [1]。材料 [2] 和 [3] 也未包含该综述具体的阶段划分信息 [2][3]。\n\n因此，基于现有材料，仅能确认该综述通过范式进行划分，且 \"naive RAG\" 是其中之一，无法获知完整的阶段或范式分类。",
+    "title_hit": 1,
+    "correctness": 1,
+    "groundedness": 2,
+    "citation_use": 2,
+    "pass": true,
+    "reason": "模型准确引用证据且无幻觉，但因检索内容不足未能覆盖全部标准要点。",
+    "latency_ms": 103970.05697299937
+  },
+  {
+    "id": "a6",
+    "category": "adaptive",
+    "question": "为什么并不是所有问题都应该一律做检索增强？",
+    "expected_titles": [
+      "Adaptive-RAG: Learning to Adapt Retrieval-Augmented Large Language Models through Question Complexity",
+      "Embedding-Informed Adaptive Retrieval-Augmented Generation of Large Language Models"
+    ],
+    "expected_points": [
+      "检索并不总是有帮助",
+      "简单问题可能不需要检索",
+      "不必要的检索会带来噪声或成本",
+      "应根据问题复杂度或模型状态自适应决定"
+    ],
+    "retrieved_titles": [
+      "Retrieval-Augmented Generation Challenges",
+      "Retrieval-Augmented Generation for Large Language Models: A Survey",
+      "Adaptive-RAG: Learning to Adapt Retrieval-Augmented Large Language Models through Question Complexity"
+    ],
+    "answer": "基于提供的材料，并不是所有问题都应该一律做检索增强的原因主要包括以下几点：\n\n1.  **用户问题的复杂度存在差异**：在现实场景中，用户提出的问题并不都具有相同的复杂度水平，因此需要针对不同复杂度的问题采取适应性策略，而不是一律采用相同的处理方式 [3]。\n2.  **检索增强本身存在挑战与局限**：RAG 系统面临检索噪声、知识冲突、上下文限制等挑战，这可能影响其在所有场景下的适用性 [1]。此外，对于需要多步推理的复杂问题，普通检索提供的信息范围有限，有时并不足以解决问题 [2]。\n3.  **需要自适应策略**：鉴于问题复杂度的不同以及检索过程的局限性，研究提出了如 Adaptive-RAG 等方法，旨在通过学习问题复杂度来适应检索增强策略，而非统一应用 [3]。\n\n材料主要强调了问题复杂度差异及 RAG 固有挑战是不宜“一律”使用的主要原因，未详细列举所有不适合检索增强的具体问题类别。",
+    "title_hit": 1,
+    "correctness": 2,
+    "groundedness": 2,
+    "citation_use": 2,
+    "pass": true,
+    "reason": "模型回答紧扣提供的检索证据，准确阐述了问题复杂度差异与检索挑战，引用规范且无幻觉。",
+    "latency_ms": 71634.58173899926
+  },
+  {
+    "id": "a7",
+    "category": "fusion",
+    "question": "RAG-Fusion 的核心思想是什么？",
+    "expected_titles": [
+      "RAG-Fusion: a New Take on Retrieval-Augmented Generation"
+    ],
+    "expected_points": [
+      "生成多个查询或多路检索查询",
+      "融合多路召回结果",
+      "提升召回覆盖率或鲁棒性",
+      "不是只依赖单一查询"
+    ],
+    "retrieved_titles": [
+      "RAG-Fusion: a New Take on Retrieval-Augmented Generation",
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection",
+      "Retrieval-Augmented Generation for Large Language Models: A Survey"
+    ],
+    "answer": "根据给定材料，RAG-Fusion 的核心思想主要包含以下几个方面：\n\n1.  **结合 RAG 与 RRF**：RAG-Fusion 将检索增强生成（RAG）与互惠排名融合（reciprocal rank fusion, RRF）相结合 [1]。\n2.  **多查询策略**：它通过生成多个查询（generating multiple queries），将用户查询扩展为不同的视角（diverse perspectives）[1][3]。\n3.  **重排序与融合**：该方法利用互惠分数对生成的查询进行重排序（reranking them with reciprocal scores），并融合文档和分数 [1]。同时，它利用并行向量搜索和智能重排序技术来解决传统搜索的局限性 [3]。\n4.  **上下文增强**：生成的查询能够从各种角度为原始查询提供上下文（contextualizing the original query from various perspectives），从而旨在提供准确和全面的答案 [1]。",
+    "title_hit": 1,
+    "correctness": 2,
+    "groundedness": 2,
+    "citation_use": 2,
+    "pass": true,
+    "reason": "回答准确覆盖了多查询生成、结果融合等核心要点，且所有信息均严格基于提供的检索证据并正确标注了引用。",
+    "latency_ms": 43953.95417599957
+  },
+  {
+    "id": "a8",
+    "category": "evaluation",
+    "question": "RAGChecker 主要解决什么问题？",
+    "expected_titles": [
+      "RAGChecker: A Fine-grained Framework for Diagnosing Retrieval-Augmented Generation"
+    ],
+    "expected_points": [
+      "细粒度诊断或评估 RAG 系统",
+      "不是只看最终答案对错",
+      "帮助定位 retrieval / grounding / generation 等环节问题",
+      "属于评测或诊断框架"
+    ],
+    "retrieved_titles": [
+      "RAGChecker: A Fine-grained Framework for Diagnosing Retrieval-Augmented Generation",
+      "Retrieval-Augmented Generation Challenges",
+      "RAGChecker: A Fine-grained Framework for Diagnosing Retrieval-Augmented Generation"
+    ],
+    "answer": "根据给定材料，RAGChecker 主要解决以下问题：\n\n1.  **RAG 系统综合评估困难的问题**：由于 RAG 的模块化性质、长形式回复（long-form responses）的评估以及测量可靠性（reliability of measurements）等因素，对 RAG 系统进行全面评估具有挑战性 [1]。\n2.  **现有评估框架的局限性**：现有的评估框架通常仅提供特定指标的细粒度评估（如 RAGAS, TruLens 等），或仅评估 RAG 的特定方面，缺乏全面性 [3]。\n3.  **错误来源诊断与人类判断相关性不足**：需要能够提供关于错误来源的可操作见解（actionable insights），并确保评估指标与人类判断具有更好的相关性 [1][3]。\n\n为此，RAGChecker 提出了一个细粒度的评估框架，包含针对检索和生成模块的一套诊断指标 [1][3]。",
+    "title_hit": 1,
+    "correctness": 2,
+    "groundedness": 2,
+    "citation_use": 2,
+    "pass": true,
+    "reason": "回答准确涵盖了细粒度诊断、评估困难及模块问题定位等关键要点，且所有内容均严格基于提供的检索证据并正确标注引用。",
+    "latency_ms": 48539.16171600031
+  }
+]

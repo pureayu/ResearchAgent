@@ -1,0 +1,164 @@
+[
+  {
+    "id": "q1",
+    "category": "paper_id",
+    "question": "Which paper introduces Self-RAG?",
+    "expected_titles": [
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection"
+    ]
+  },
+  {
+    "id": "q2",
+    "category": "paper_id",
+    "question": "Which paper is a survey of retrieval-augmented generation for large language models?",
+    "expected_titles": [
+      "Retrieval-Augmented Generation for Large Language Models: A Survey"
+    ]
+  },
+  {
+    "id": "q3",
+    "category": "paper_id",
+    "question": "Which paper proposes Corrective Retrieval Augmented Generation?",
+    "expected_titles": [
+      "Corrective Retrieval Augmented Generation"
+    ]
+  },
+  {
+    "id": "q4",
+    "category": "challenge",
+    "question": "What are the main challenges of RAG?",
+    "expected_titles": [
+      "Retrieval-Augmented Generation Challenges",
+      "Retrieval-Augmented Generation for Large Language Models: A Survey"
+    ]
+  },
+  {
+    "id": "q5",
+    "category": "challenge",
+    "question": "RAG 的主要挑战是什么？",
+    "expected_titles": [
+      "Retrieval-Augmented Generation Challenges",
+      "Retrieval-Augmented Generation for Large Language Models: A Survey"
+    ]
+  },
+  {
+    "id": "q6",
+    "category": "method",
+    "question": "How does Self-RAG use self-reflection during generation?",
+    "expected_titles": [
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection"
+    ]
+  },
+  {
+    "id": "q7",
+    "category": "method",
+    "question": "How does CRAG correct retrieval errors?",
+    "expected_titles": [
+      "Corrective Retrieval Augmented Generation"
+    ]
+  },
+  {
+    "id": "q8",
+    "category": "foundation",
+    "question": "Which paper introduces retrieval-augmented generation for knowledge-intensive NLP tasks?",
+    "expected_titles": [
+      "Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks"
+    ]
+  },
+  {
+    "id": "q9",
+    "category": "survey",
+    "question": "Which paper divides RAG into Naive RAG, Advanced RAG, and Modular RAG?",
+    "expected_titles": [
+      "Retrieval-Augmented Generation for Large Language Models: A Survey"
+    ]
+  },
+  {
+    "id": "q10",
+    "category": "robustness",
+    "question": "Which paper focuses on robustness when retrieval goes wrong?",
+    "expected_titles": [
+      "Corrective Retrieval Augmented Generation"
+    ]
+  },
+  {
+    "id": "q11",
+    "category": "method",
+    "question": "Which paper trains a single LM to retrieve, generate, and critique?",
+    "expected_titles": [
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection"
+    ]
+  },
+  {
+    "id": "q12",
+    "category": "survey",
+    "question": "哪篇论文系统综述了面向大语言模型的 RAG？",
+    "expected_titles": [
+      "Retrieval-Augmented Generation for Large Language Models: A Survey"
+    ]
+  },
+  {
+    "id": "q13",
+    "category": "foundation",
+    "question": "Which paper says providing provenance and updating world knowledge remain open problems?",
+    "expected_titles": [
+      "Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks"
+    ]
+  },
+  {
+    "id": "q14",
+    "category": "robustness",
+    "question": "Which paper uses a retrieval evaluator to trigger different retrieval actions?",
+    "expected_titles": [
+      "Corrective Retrieval Augmented Generation"
+    ]
+  },
+  {
+    "id": "q15",
+    "category": "method",
+    "question": "Which paper argues that fixed-number indiscriminate retrieval can hurt LM versatility?",
+    "expected_titles": [
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection"
+    ]
+  },
+  {
+    "id": "q16",
+    "category": "challenge",
+    "question": "Which source explicitly lists retrieval noise, knowledge conflict, context limits, citation reliability, and freshness?",
+    "expected_titles": [
+      "Retrieval-Augmented Generation Challenges"
+    ]
+  },
+  {
+    "id": "q17",
+    "category": "foundation",
+    "question": "Which paper frames RAG as combining parametric and non-parametric memory?",
+    "expected_titles": [
+      "Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks"
+    ]
+  },
+  {
+    "id": "q18",
+    "category": "survey",
+    "question": "Which paper emphasizes hallucination, outdated knowledge, and non-transparent reasoning as motivations for RAG?",
+    "expected_titles": [
+      "Retrieval-Augmented Generation for Large Language Models: A Survey"
+    ]
+  },
+  {
+    "id": "q19",
+    "category": "method",
+    "question": "Which paper improves factuality through retrieval and self-reflection?",
+    "expected_titles": [
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection"
+    ]
+  },
+  {
+    "id": "q20",
+    "category": "robustness",
+    "question": "Which paper studies corrective retrieval augmentation for robust generation?",
+    "expected_titles": [
+      "Corrective Retrieval Augmented Generation"
+    ]
+  }
+]

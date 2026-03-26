@@ -1,0 +1,1610 @@
+[
+  {
+    "mode": "local",
+    "id": "q1",
+    "category": "paper_id",
+    "question": "Which paper introduces Self-RAG?",
+    "expected_titles": [
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection"
+    ],
+    "retrieved_titles": [
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection",
+      "Corrective Retrieval Augmented Generation",
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection",
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection",
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection"
+    ],
+    "hit_at_1": 1,
+    "hit_at_k": 1,
+    "mrr": 1.0,
+    "latency_ms": 208.2559440023033
+  },
+  {
+    "mode": "local",
+    "id": "q2",
+    "category": "paper_id",
+    "question": "Which paper is a survey of retrieval-augmented generation for large language models?",
+    "expected_titles": [
+      "Retrieval-Augmented Generation for Large Language Models: A Survey"
+    ],
+    "retrieved_titles": [
+      "Retrieval-Augmented Generation for Large Language Models: A Survey",
+      "Retrieval-Augmented Generation for Large Language Models: A Survey",
+      "Embedding-Informed Adaptive Retrieval-Augmented Generation of Large Language Models",
+      "Retrieval-Augmented Generation for Large Language Models: A Survey",
+      "Retrieval-Augmented Generation for Large Language Models: A Survey"
+    ],
+    "hit_at_1": 1,
+    "hit_at_k": 1,
+    "mrr": 1.0,
+    "latency_ms": 272.4993779993383
+  },
+  {
+    "mode": "local",
+    "id": "q3",
+    "category": "paper_id",
+    "question": "Which paper proposes Corrective Retrieval Augmented Generation?",
+    "expected_titles": [
+      "Corrective Retrieval Augmented Generation"
+    ],
+    "retrieved_titles": [
+      "Corrective Retrieval Augmented Generation",
+      "Corrective Retrieval Augmented Generation",
+      "Corrective Retrieval Augmented Generation",
+      "Corrective Retrieval Augmented Generation",
+      "Retrieval-Augmented Generation for Large Language Models: A Survey"
+    ],
+    "hit_at_1": 1,
+    "hit_at_k": 1,
+    "mrr": 1.0,
+    "latency_ms": 229.28335699543823
+  },
+  {
+    "mode": "local",
+    "id": "q4",
+    "category": "challenge",
+    "question": "What are the main challenges of RAG?",
+    "expected_titles": [
+      "Retrieval-Augmented Generation Challenges",
+      "Retrieval-Augmented Generation for Large Language Models: A Survey"
+    ],
+    "retrieved_titles": [
+      "Retrieval-Augmented Generation for Large Language Models: A Survey",
+      "RAG-Fusion: a New Take on Retrieval-Augmented Generation",
+      "RAG-Fusion: a New Take on Retrieval-Augmented Generation",
+      "RAGChecker: A Fine-grained Framework for Diagnosing Retrieval-Augmented Generation",
+      "MultiHop-RAG: Benchmarking Retrieval-Augmented Generation for Multi-Hop Queries"
+    ],
+    "hit_at_1": 1,
+    "hit_at_k": 1,
+    "mrr": 1.0,
+    "latency_ms": 280.9201359996223
+  },
+  {
+    "mode": "local",
+    "id": "q5",
+    "category": "challenge",
+    "question": "RAG 的主要挑战是什么？",
+    "expected_titles": [
+      "Retrieval-Augmented Generation Challenges",
+      "Retrieval-Augmented Generation for Large Language Models: A Survey"
+    ],
+    "retrieved_titles": [
+      "MultiHop-RAG: Benchmarking Retrieval-Augmented Generation for Multi-Hop Queries",
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection",
+      "MultiHop-RAG: Benchmarking Retrieval-Augmented Generation for Multi-Hop Queries",
+      "MultiHop-RAG: Benchmarking Retrieval-Augmented Generation for Multi-Hop Queries",
+      "MultiHop-RAG: Benchmarking Retrieval-Augmented Generation for Multi-Hop Queries"
+    ],
+    "hit_at_1": 0,
+    "hit_at_k": 0,
+    "mrr": 0.0,
+    "latency_ms": 178.14671700034523
+  },
+  {
+    "mode": "local",
+    "id": "q6",
+    "category": "method",
+    "question": "How does Self-RAG use self-reflection during generation?",
+    "expected_titles": [
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection"
+    ],
+    "retrieved_titles": [
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection",
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection",
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection",
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection",
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection"
+    ],
+    "hit_at_1": 1,
+    "hit_at_k": 1,
+    "mrr": 1.0,
+    "latency_ms": 227.22433800663566
+  },
+  {
+    "mode": "local",
+    "id": "q7",
+    "category": "method",
+    "question": "How does CRAG correct retrieval errors?",
+    "expected_titles": [
+      "Corrective Retrieval Augmented Generation"
+    ],
+    "retrieved_titles": [
+      "Corrective Retrieval Augmented Generation",
+      "Corrective Retrieval Augmented Generation",
+      "Corrective Retrieval Augmented Generation",
+      "Corrective Retrieval Augmented Generation",
+      "Corrective Retrieval Augmented Generation"
+    ],
+    "hit_at_1": 1,
+    "hit_at_k": 1,
+    "mrr": 1.0,
+    "latency_ms": 202.31610700284364
+  },
+  {
+    "mode": "local",
+    "id": "q8",
+    "category": "foundation",
+    "question": "Which paper introduces retrieval-augmented generation for knowledge-intensive NLP tasks?",
+    "expected_titles": [
+      "Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks"
+    ],
+    "retrieved_titles": [
+      "Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks",
+      "Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks",
+      "Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks",
+      "Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks",
+      "Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks"
+    ],
+    "hit_at_1": 1,
+    "hit_at_k": 1,
+    "mrr": 1.0,
+    "latency_ms": 263.062511003227
+  },
+  {
+    "mode": "local",
+    "id": "q9",
+    "category": "survey",
+    "question": "Which paper divides RAG into Naive RAG, Advanced RAG, and Modular RAG?",
+    "expected_titles": [
+      "Retrieval-Augmented Generation for Large Language Models: A Survey"
+    ],
+    "retrieved_titles": [
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection",
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection",
+      "RAG-Fusion: a New Take on Retrieval-Augmented Generation",
+      "MultiHop-RAG: Benchmarking Retrieval-Augmented Generation for Multi-Hop Queries",
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection"
+    ],
+    "hit_at_1": 0,
+    "hit_at_k": 0,
+    "mrr": 0.0,
+    "latency_ms": 253.81857899628812
+  },
+  {
+    "mode": "local",
+    "id": "q10",
+    "category": "robustness",
+    "question": "Which paper focuses on robustness when retrieval goes wrong?",
+    "expected_titles": [
+      "Corrective Retrieval Augmented Generation"
+    ],
+    "retrieved_titles": [
+      "Corrective Retrieval Augmented Generation",
+      "Retrieval-Augmented Generation for Large Language Models: A Survey",
+      "Corrective Retrieval Augmented Generation",
+      "Embedding-Informed Adaptive Retrieval-Augmented Generation of Large Language Models",
+      "Embedding-Informed Adaptive Retrieval-Augmented Generation of Large Language Models"
+    ],
+    "hit_at_1": 1,
+    "hit_at_k": 1,
+    "mrr": 1.0,
+    "latency_ms": 240.7151659936062
+  },
+  {
+    "mode": "local",
+    "id": "q11",
+    "category": "method",
+    "question": "Which paper trains a single LM to retrieve, generate, and critique?",
+    "expected_titles": [
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection"
+    ],
+    "retrieved_titles": [
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection",
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection",
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection",
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection",
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection"
+    ],
+    "hit_at_1": 1,
+    "hit_at_k": 1,
+    "mrr": 1.0,
+    "latency_ms": 250.1361730028293
+  },
+  {
+    "mode": "local",
+    "id": "q12",
+    "category": "survey",
+    "question": "哪篇论文系统综述了面向大语言模型的 RAG？",
+    "expected_titles": [
+      "Retrieval-Augmented Generation for Large Language Models: A Survey"
+    ],
+    "retrieved_titles": [
+      "MultiHop-RAG: Benchmarking Retrieval-Augmented Generation for Multi-Hop Queries",
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection",
+      "MultiHop-RAG: Benchmarking Retrieval-Augmented Generation for Multi-Hop Queries",
+      "MultiHop-RAG: Benchmarking Retrieval-Augmented Generation for Multi-Hop Queries",
+      "MultiHop-RAG: Benchmarking Retrieval-Augmented Generation for Multi-Hop Queries"
+    ],
+    "hit_at_1": 0,
+    "hit_at_k": 0,
+    "mrr": 0.0,
+    "latency_ms": 172.80659199604997
+  },
+  {
+    "mode": "local",
+    "id": "q13",
+    "category": "foundation",
+    "question": "Which paper says providing provenance and updating world knowledge remain open problems?",
+    "expected_titles": [
+      "Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks"
+    ],
+    "retrieved_titles": [
+      "Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks",
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection",
+      "Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks",
+      "Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks",
+      "Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks"
+    ],
+    "hit_at_1": 1,
+    "hit_at_k": 1,
+    "mrr": 1.0,
+    "latency_ms": 258.94403000711463
+  },
+  {
+    "mode": "local",
+    "id": "q14",
+    "category": "robustness",
+    "question": "Which paper uses a retrieval evaluator to trigger different retrieval actions?",
+    "expected_titles": [
+      "Corrective Retrieval Augmented Generation"
+    ],
+    "retrieved_titles": [
+      "Corrective Retrieval Augmented Generation",
+      "Adaptive-RAG: Learning to Adapt Retrieval-Augmented Large Language Models through Question Complexity",
+      "Corrective Retrieval Augmented Generation",
+      "Corrective Retrieval Augmented Generation",
+      "Adaptive-RAG: Learning to Adapt Retrieval-Augmented Large Language Models through Question Complexity"
+    ],
+    "hit_at_1": 1,
+    "hit_at_k": 1,
+    "mrr": 1.0,
+    "latency_ms": 244.7464860015316
+  },
+  {
+    "mode": "local",
+    "id": "q15",
+    "category": "method",
+    "question": "Which paper argues that fixed-number indiscriminate retrieval can hurt LM versatility?",
+    "expected_titles": [
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection"
+    ],
+    "retrieved_titles": [
+      "Retrieval-Augmented Generation for Large Language Models: A Survey",
+      "Retrieval-Augmented Generation for Large Language Models: A Survey",
+      "MultiHop-RAG: Benchmarking Retrieval-Augmented Generation for Multi-Hop Queries",
+      "MultiHop-RAG: Benchmarking Retrieval-Augmented Generation for Multi-Hop Queries",
+      "Corrective Retrieval Augmented Generation"
+    ],
+    "hit_at_1": 0,
+    "hit_at_k": 0,
+    "mrr": 0.0,
+    "latency_ms": 229.16939100105083
+  },
+  {
+    "mode": "local",
+    "id": "q16",
+    "category": "challenge",
+    "question": "Which source explicitly lists retrieval noise, knowledge conflict, context limits, citation reliability, and freshness?",
+    "expected_titles": [
+      "Retrieval-Augmented Generation Challenges"
+    ],
+    "retrieved_titles": [
+      "Retrieval-Augmented Generation Challenges",
+      "Adaptive-RAG: Learning to Adapt Retrieval-Augmented Large Language Models through Question Complexity",
+      "Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks",
+      "Retrieval-Augmented Generation for Large Language Models: A Survey",
+      "Retrieval-Augmented Generation for Large Language Models: A Survey"
+    ],
+    "hit_at_1": 1,
+    "hit_at_k": 1,
+    "mrr": 1.0,
+    "latency_ms": 249.47274800069863
+  },
+  {
+    "mode": "local",
+    "id": "q17",
+    "category": "foundation",
+    "question": "Which paper frames RAG as combining parametric and non-parametric memory?",
+    "expected_titles": [
+      "Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks"
+    ],
+    "retrieved_titles": [
+      "Adaptive-RAG: Learning to Adapt Retrieval-Augmented Large Language Models through Question Complexity",
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection",
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection",
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection",
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection"
+    ],
+    "hit_at_1": 0,
+    "hit_at_k": 0,
+    "mrr": 0.0,
+    "latency_ms": 245.345922994602
+  },
+  {
+    "mode": "local",
+    "id": "q18",
+    "category": "survey",
+    "question": "Which paper emphasizes hallucination, outdated knowledge, and non-transparent reasoning as motivations for RAG?",
+    "expected_titles": [
+      "Retrieval-Augmented Generation for Large Language Models: A Survey"
+    ],
+    "retrieved_titles": [
+      "Retrieval-Augmented Generation for Large Language Models: A Survey",
+      "MultiHop-RAG: Benchmarking Retrieval-Augmented Generation for Multi-Hop Queries",
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection",
+      "MultiHop-RAG: Benchmarking Retrieval-Augmented Generation for Multi-Hop Queries",
+      "Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks"
+    ],
+    "hit_at_1": 1,
+    "hit_at_k": 1,
+    "mrr": 1.0,
+    "latency_ms": 250.14726399967913
+  },
+  {
+    "mode": "local",
+    "id": "q19",
+    "category": "method",
+    "question": "Which paper improves factuality through retrieval and self-reflection?",
+    "expected_titles": [
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection"
+    ],
+    "retrieved_titles": [
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection",
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection",
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection",
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection",
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection"
+    ],
+    "hit_at_1": 1,
+    "hit_at_k": 1,
+    "mrr": 1.0,
+    "latency_ms": 240.42842000199016
+  },
+  {
+    "mode": "local",
+    "id": "q20",
+    "category": "robustness",
+    "question": "Which paper studies corrective retrieval augmentation for robust generation?",
+    "expected_titles": [
+      "Corrective Retrieval Augmented Generation"
+    ],
+    "retrieved_titles": [
+      "Retrieval-Augmented Generation for Large Language Models: A Survey",
+      "Corrective Retrieval Augmented Generation",
+      "Corrective Retrieval Augmented Generation",
+      "Retrieval-Augmented Generation for Large Language Models: A Survey",
+      "Retrieval-Augmented Generation for Large Language Models: A Survey"
+    ],
+    "hit_at_1": 0,
+    "hit_at_k": 1,
+    "mrr": 0.5,
+    "latency_ms": 239.53931200230727
+  },
+  {
+    "mode": "simple-bm25",
+    "id": "q1",
+    "category": "paper_id",
+    "question": "Which paper introduces Self-RAG?",
+    "expected_titles": [
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection"
+    ],
+    "retrieved_titles": [
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection",
+      "Retrieval-Augmented Generation for Large Language Models: A Survey",
+      "Corrective Retrieval Augmented Generation",
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection",
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection"
+    ],
+    "hit_at_1": 1,
+    "hit_at_k": 1,
+    "mrr": 1.0,
+    "latency_ms": 401.79572999477386
+  },
+  {
+    "mode": "simple-bm25",
+    "id": "q2",
+    "category": "paper_id",
+    "question": "Which paper is a survey of retrieval-augmented generation for large language models?",
+    "expected_titles": [
+      "Retrieval-Augmented Generation for Large Language Models: A Survey"
+    ],
+    "retrieved_titles": [
+      "Retrieval-Augmented Generation for Large Language Models: A Survey",
+      "RAGChecker: A Fine-grained Framework for Diagnosing Retrieval-Augmented Generation",
+      "Embedding-Informed Adaptive Retrieval-Augmented Generation of Large Language Models",
+      "MultiHop-RAG: Benchmarking Retrieval-Augmented Generation for Multi-Hop Queries",
+      "RAG-Fusion: a New Take on Retrieval-Augmented Generation"
+    ],
+    "hit_at_1": 1,
+    "hit_at_k": 1,
+    "mrr": 1.0,
+    "latency_ms": 396.9989660035935
+  },
+  {
+    "mode": "simple-bm25",
+    "id": "q3",
+    "category": "paper_id",
+    "question": "Which paper proposes Corrective Retrieval Augmented Generation?",
+    "expected_titles": [
+      "Corrective Retrieval Augmented Generation"
+    ],
+    "retrieved_titles": [
+      "Corrective Retrieval Augmented Generation",
+      "Retrieval-Augmented Generation for Large Language Models: A Survey",
+      "MultiHop-RAG: Benchmarking Retrieval-Augmented Generation for Multi-Hop Queries",
+      "RAGChecker: A Fine-grained Framework for Diagnosing Retrieval-Augmented Generation",
+      "Embedding-Informed Adaptive Retrieval-Augmented Generation of Large Language Models"
+    ],
+    "hit_at_1": 1,
+    "hit_at_k": 1,
+    "mrr": 1.0,
+    "latency_ms": 386.92382400040515
+  },
+  {
+    "mode": "simple-bm25",
+    "id": "q4",
+    "category": "challenge",
+    "question": "What are the main challenges of RAG?",
+    "expected_titles": [
+      "Retrieval-Augmented Generation Challenges",
+      "Retrieval-Augmented Generation for Large Language Models: A Survey"
+    ],
+    "retrieved_titles": [
+      "Retrieval-Augmented Generation Challenges",
+      "Retrieval-Augmented Generation for Large Language Models: A Survey",
+      "RAG-Fusion: a New Take on Retrieval-Augmented Generation",
+      "RAGChecker: A Fine-grained Framework for Diagnosing Retrieval-Augmented Generation",
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection"
+    ],
+    "hit_at_1": 1,
+    "hit_at_k": 1,
+    "mrr": 1.0,
+    "latency_ms": 399.6218110041809
+  },
+  {
+    "mode": "simple-bm25",
+    "id": "q5",
+    "category": "challenge",
+    "question": "RAG 的主要挑战是什么？",
+    "expected_titles": [
+      "Retrieval-Augmented Generation Challenges",
+      "Retrieval-Augmented Generation for Large Language Models: A Survey"
+    ],
+    "retrieved_titles": [
+      "RAG-Fusion: a New Take on Retrieval-Augmented Generation",
+      "MultiHop-RAG: Benchmarking Retrieval-Augmented Generation for Multi-Hop Queries",
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection",
+      "Retrieval-Augmented Generation for Large Language Models: A Survey",
+      "Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks"
+    ],
+    "hit_at_1": 0,
+    "hit_at_k": 1,
+    "mrr": 0.25,
+    "latency_ms": 405.6946710043121
+  },
+  {
+    "mode": "simple-bm25",
+    "id": "q6",
+    "category": "method",
+    "question": "How does Self-RAG use self-reflection during generation?",
+    "expected_titles": [
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection"
+    ],
+    "retrieved_titles": [
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection",
+      "Retrieval-Augmented Generation for Large Language Models: A Survey",
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection",
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection",
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection"
+    ],
+    "hit_at_1": 1,
+    "hit_at_k": 1,
+    "mrr": 1.0,
+    "latency_ms": 404.9256059952313
+  },
+  {
+    "mode": "simple-bm25",
+    "id": "q7",
+    "category": "method",
+    "question": "How does CRAG correct retrieval errors?",
+    "expected_titles": [
+      "Corrective Retrieval Augmented Generation"
+    ],
+    "retrieved_titles": [
+      "Corrective Retrieval Augmented Generation",
+      "RAGChecker: A Fine-grained Framework for Diagnosing Retrieval-Augmented Generation",
+      "RAG-Fusion: a New Take on Retrieval-Augmented Generation",
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection",
+      "Corrective Retrieval Augmented Generation"
+    ],
+    "hit_at_1": 1,
+    "hit_at_k": 1,
+    "mrr": 1.0,
+    "latency_ms": 404.3326800019713
+  },
+  {
+    "mode": "simple-bm25",
+    "id": "q8",
+    "category": "foundation",
+    "question": "Which paper introduces retrieval-augmented generation for knowledge-intensive NLP tasks?",
+    "expected_titles": [
+      "Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks"
+    ],
+    "retrieved_titles": [
+      "Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks",
+      "Retrieval-Augmented Generation for Large Language Models: A Survey",
+      "Corrective Retrieval Augmented Generation",
+      "RAG-Fusion: a New Take on Retrieval-Augmented Generation",
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection"
+    ],
+    "hit_at_1": 1,
+    "hit_at_k": 1,
+    "mrr": 1.0,
+    "latency_ms": 398.36194499366684
+  },
+  {
+    "mode": "simple-bm25",
+    "id": "q9",
+    "category": "survey",
+    "question": "Which paper divides RAG into Naive RAG, Advanced RAG, and Modular RAG?",
+    "expected_titles": [
+      "Retrieval-Augmented Generation for Large Language Models: A Survey"
+    ],
+    "retrieved_titles": [
+      "Retrieval-Augmented Generation for Large Language Models: A Survey",
+      "RAGChecker: A Fine-grained Framework for Diagnosing Retrieval-Augmented Generation",
+      "Corrective Retrieval Augmented Generation",
+      "Retrieval-Augmented Generation for Large Language Models: A Survey",
+      "Retrieval-Augmented Generation for Large Language Models: A Survey"
+    ],
+    "hit_at_1": 1,
+    "hit_at_k": 1,
+    "mrr": 1.0,
+    "latency_ms": 386.66720400215127
+  },
+  {
+    "mode": "simple-bm25",
+    "id": "q10",
+    "category": "robustness",
+    "question": "Which paper focuses on robustness when retrieval goes wrong?",
+    "expected_titles": [
+      "Corrective Retrieval Augmented Generation"
+    ],
+    "retrieved_titles": [
+      "Corrective Retrieval Augmented Generation",
+      "Retrieval-Augmented Generation for Large Language Models: A Survey",
+      "MultiHop-RAG: Benchmarking Retrieval-Augmented Generation for Multi-Hop Queries",
+      "Embedding-Informed Adaptive Retrieval-Augmented Generation of Large Language Models",
+      "RAGChecker: A Fine-grained Framework for Diagnosing Retrieval-Augmented Generation"
+    ],
+    "hit_at_1": 1,
+    "hit_at_k": 1,
+    "mrr": 1.0,
+    "latency_ms": 380.64548499824014
+  },
+  {
+    "mode": "simple-bm25",
+    "id": "q11",
+    "category": "method",
+    "question": "Which paper trains a single LM to retrieve, generate, and critique?",
+    "expected_titles": [
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection"
+    ],
+    "retrieved_titles": [
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection",
+      "Adaptive-RAG: Learning to Adapt Retrieval-Augmented Large Language Models through Question Complexity",
+      "Retrieval-Augmented Generation for Large Language Models: A Survey",
+      "Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks",
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection"
+    ],
+    "hit_at_1": 1,
+    "hit_at_k": 1,
+    "mrr": 1.0,
+    "latency_ms": 397.1426269999938
+  },
+  {
+    "mode": "simple-bm25",
+    "id": "q12",
+    "category": "survey",
+    "question": "哪篇论文系统综述了面向大语言模型的 RAG？",
+    "expected_titles": [
+      "Retrieval-Augmented Generation for Large Language Models: A Survey"
+    ],
+    "retrieved_titles": [
+      "RAG-Fusion: a New Take on Retrieval-Augmented Generation",
+      "MultiHop-RAG: Benchmarking Retrieval-Augmented Generation for Multi-Hop Queries",
+      "Retrieval-Augmented Generation for Large Language Models: A Survey",
+      "Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks",
+      "Corrective Retrieval Augmented Generation"
+    ],
+    "hit_at_1": 0,
+    "hit_at_k": 1,
+    "mrr": 0.3333333333333333,
+    "latency_ms": 380.2637760018115
+  },
+  {
+    "mode": "simple-bm25",
+    "id": "q13",
+    "category": "foundation",
+    "question": "Which paper says providing provenance and updating world knowledge remain open problems?",
+    "expected_titles": [
+      "Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks"
+    ],
+    "retrieved_titles": [
+      "Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks",
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection",
+      "Retrieval-Augmented Generation for Large Language Models: A Survey",
+      "MultiHop-RAG: Benchmarking Retrieval-Augmented Generation for Multi-Hop Queries",
+      "RAGChecker: A Fine-grained Framework for Diagnosing Retrieval-Augmented Generation"
+    ],
+    "hit_at_1": 1,
+    "hit_at_k": 1,
+    "mrr": 1.0,
+    "latency_ms": 395.31698700011475
+  },
+  {
+    "mode": "simple-bm25",
+    "id": "q14",
+    "category": "robustness",
+    "question": "Which paper uses a retrieval evaluator to trigger different retrieval actions?",
+    "expected_titles": [
+      "Corrective Retrieval Augmented Generation"
+    ],
+    "retrieved_titles": [
+      "Corrective Retrieval Augmented Generation",
+      "Retrieval-Augmented Generation for Large Language Models: A Survey",
+      "Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks",
+      "Adaptive-RAG: Learning to Adapt Retrieval-Augmented Large Language Models through Question Complexity",
+      "RAGChecker: A Fine-grained Framework for Diagnosing Retrieval-Augmented Generation"
+    ],
+    "hit_at_1": 1,
+    "hit_at_k": 1,
+    "mrr": 1.0,
+    "latency_ms": 379.19590199453523
+  },
+  {
+    "mode": "simple-bm25",
+    "id": "q15",
+    "category": "method",
+    "question": "Which paper argues that fixed-number indiscriminate retrieval can hurt LM versatility?",
+    "expected_titles": [
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection"
+    ],
+    "retrieved_titles": [
+      "Retrieval-Augmented Generation for Large Language Models: A Survey",
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection",
+      "Corrective Retrieval Augmented Generation",
+      "MultiHop-RAG: Benchmarking Retrieval-Augmented Generation for Multi-Hop Queries",
+      "Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks"
+    ],
+    "hit_at_1": 0,
+    "hit_at_k": 1,
+    "mrr": 0.5,
+    "latency_ms": 409.20770700176945
+  },
+  {
+    "mode": "simple-bm25",
+    "id": "q16",
+    "category": "challenge",
+    "question": "Which source explicitly lists retrieval noise, knowledge conflict, context limits, citation reliability, and freshness?",
+    "expected_titles": [
+      "Retrieval-Augmented Generation Challenges"
+    ],
+    "retrieved_titles": [
+      "Retrieval-Augmented Generation Challenges",
+      "Retrieval-Augmented Generation for Large Language Models: A Survey",
+      "RAGChecker: A Fine-grained Framework for Diagnosing Retrieval-Augmented Generation",
+      "Embedding-Informed Adaptive Retrieval-Augmented Generation of Large Language Models",
+      "MultiHop-RAG: Benchmarking Retrieval-Augmented Generation for Multi-Hop Queries"
+    ],
+    "hit_at_1": 1,
+    "hit_at_k": 1,
+    "mrr": 1.0,
+    "latency_ms": 386.1641559997224
+  },
+  {
+    "mode": "simple-bm25",
+    "id": "q17",
+    "category": "foundation",
+    "question": "Which paper frames RAG as combining parametric and non-parametric memory?",
+    "expected_titles": [
+      "Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks"
+    ],
+    "retrieved_titles": [
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection",
+      "Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks",
+      "Adaptive-RAG: Learning to Adapt Retrieval-Augmented Large Language Models through Question Complexity",
+      "Embedding-Informed Adaptive Retrieval-Augmented Generation of Large Language Models",
+      "Retrieval-Augmented Generation Challenges"
+    ],
+    "hit_at_1": 0,
+    "hit_at_k": 1,
+    "mrr": 0.5,
+    "latency_ms": 391.14036800310714
+  },
+  {
+    "mode": "simple-bm25",
+    "id": "q18",
+    "category": "survey",
+    "question": "Which paper emphasizes hallucination, outdated knowledge, and non-transparent reasoning as motivations for RAG?",
+    "expected_titles": [
+      "Retrieval-Augmented Generation for Large Language Models: A Survey"
+    ],
+    "retrieved_titles": [
+      "Retrieval-Augmented Generation for Large Language Models: A Survey",
+      "Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks",
+      "MultiHop-RAG: Benchmarking Retrieval-Augmented Generation for Multi-Hop Queries",
+      "Adaptive-RAG: Learning to Adapt Retrieval-Augmented Large Language Models through Question Complexity",
+      "Embedding-Informed Adaptive Retrieval-Augmented Generation of Large Language Models"
+    ],
+    "hit_at_1": 1,
+    "hit_at_k": 1,
+    "mrr": 1.0,
+    "latency_ms": 388.7869569953182
+  },
+  {
+    "mode": "simple-bm25",
+    "id": "q19",
+    "category": "method",
+    "question": "Which paper improves factuality through retrieval and self-reflection?",
+    "expected_titles": [
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection"
+    ],
+    "retrieved_titles": [
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection",
+      "Retrieval-Augmented Generation for Large Language Models: A Survey",
+      "Corrective Retrieval Augmented Generation",
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection",
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection"
+    ],
+    "hit_at_1": 1,
+    "hit_at_k": 1,
+    "mrr": 1.0,
+    "latency_ms": 382.3317930000485
+  },
+  {
+    "mode": "simple-bm25",
+    "id": "q20",
+    "category": "robustness",
+    "question": "Which paper studies corrective retrieval augmentation for robust generation?",
+    "expected_titles": [
+      "Corrective Retrieval Augmented Generation"
+    ],
+    "retrieved_titles": [
+      "Corrective Retrieval Augmented Generation",
+      "Retrieval-Augmented Generation for Large Language Models: A Survey",
+      "Embedding-Informed Adaptive Retrieval-Augmented Generation of Large Language Models",
+      "RAGChecker: A Fine-grained Framework for Diagnosing Retrieval-Augmented Generation",
+      "Adaptive-RAG: Learning to Adapt Retrieval-Augmented Large Language Models through Question Complexity"
+    ],
+    "hit_at_1": 1,
+    "hit_at_k": 1,
+    "mrr": 1.0,
+    "latency_ms": 380.19368499954
+  },
+  {
+    "mode": "simple-vector",
+    "id": "q1",
+    "category": "paper_id",
+    "question": "Which paper introduces Self-RAG?",
+    "expected_titles": [
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection"
+    ],
+    "retrieved_titles": [
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection",
+      "Corrective Retrieval Augmented Generation",
+      "Retrieval-Augmented Generation for Large Language Models: A Survey",
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection",
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection"
+    ],
+    "hit_at_1": 1,
+    "hit_at_k": 1,
+    "mrr": 1.0,
+    "latency_ms": 1457.1243059981498
+  },
+  {
+    "mode": "simple-vector",
+    "id": "q2",
+    "category": "paper_id",
+    "question": "Which paper is a survey of retrieval-augmented generation for large language models?",
+    "expected_titles": [
+      "Retrieval-Augmented Generation for Large Language Models: A Survey"
+    ],
+    "retrieved_titles": [
+      "Retrieval-Augmented Generation for Large Language Models: A Survey",
+      "Embedding-Informed Adaptive Retrieval-Augmented Generation of Large Language Models",
+      "RAGChecker: A Fine-grained Framework for Diagnosing Retrieval-Augmented Generation",
+      "RAG-Fusion: a New Take on Retrieval-Augmented Generation",
+      "Corrective Retrieval Augmented Generation"
+    ],
+    "hit_at_1": 1,
+    "hit_at_k": 1,
+    "mrr": 1.0,
+    "latency_ms": 631.8815429985989
+  },
+  {
+    "mode": "simple-vector",
+    "id": "q3",
+    "category": "paper_id",
+    "question": "Which paper proposes Corrective Retrieval Augmented Generation?",
+    "expected_titles": [
+      "Corrective Retrieval Augmented Generation"
+    ],
+    "retrieved_titles": [
+      "Corrective Retrieval Augmented Generation",
+      "Retrieval-Augmented Generation for Large Language Models: A Survey",
+      "RAG-Fusion: a New Take on Retrieval-Augmented Generation",
+      "RAGChecker: A Fine-grained Framework for Diagnosing Retrieval-Augmented Generation",
+      "Retrieval-Augmented Generation Challenges"
+    ],
+    "hit_at_1": 1,
+    "hit_at_k": 1,
+    "mrr": 1.0,
+    "latency_ms": 1160.679660999449
+  },
+  {
+    "mode": "simple-vector",
+    "id": "q4",
+    "category": "challenge",
+    "question": "What are the main challenges of RAG?",
+    "expected_titles": [
+      "Retrieval-Augmented Generation Challenges",
+      "Retrieval-Augmented Generation for Large Language Models: A Survey"
+    ],
+    "retrieved_titles": [
+      "Retrieval-Augmented Generation Challenges",
+      "RAG-Fusion: a New Take on Retrieval-Augmented Generation",
+      "Retrieval-Augmented Generation for Large Language Models: A Survey",
+      "RAGChecker: A Fine-grained Framework for Diagnosing Retrieval-Augmented Generation",
+      "Corrective Retrieval Augmented Generation"
+    ],
+    "hit_at_1": 1,
+    "hit_at_k": 1,
+    "mrr": 1.0,
+    "latency_ms": 1043.5470480006188
+  },
+  {
+    "mode": "simple-vector",
+    "id": "q5",
+    "category": "challenge",
+    "question": "RAG 的主要挑战是什么？",
+    "expected_titles": [
+      "Retrieval-Augmented Generation Challenges",
+      "Retrieval-Augmented Generation for Large Language Models: A Survey"
+    ],
+    "retrieved_titles": [
+      "RAG-Fusion: a New Take on Retrieval-Augmented Generation",
+      "Retrieval-Augmented Generation Challenges",
+      "MultiHop-RAG: Benchmarking Retrieval-Augmented Generation for Multi-Hop Queries",
+      "Retrieval-Augmented Generation for Large Language Models: A Survey",
+      "RAGChecker: A Fine-grained Framework for Diagnosing Retrieval-Augmented Generation"
+    ],
+    "hit_at_1": 0,
+    "hit_at_k": 1,
+    "mrr": 0.5,
+    "latency_ms": 1194.620661000954
+  },
+  {
+    "mode": "simple-vector",
+    "id": "q6",
+    "category": "method",
+    "question": "How does Self-RAG use self-reflection during generation?",
+    "expected_titles": [
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection"
+    ],
+    "retrieved_titles": [
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection",
+      "Retrieval-Augmented Generation for Large Language Models: A Survey",
+      "Corrective Retrieval Augmented Generation",
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection",
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection"
+    ],
+    "hit_at_1": 1,
+    "hit_at_k": 1,
+    "mrr": 1.0,
+    "latency_ms": 954.0674849995412
+  },
+  {
+    "mode": "simple-vector",
+    "id": "q7",
+    "category": "method",
+    "question": "How does CRAG correct retrieval errors?",
+    "expected_titles": [
+      "Corrective Retrieval Augmented Generation"
+    ],
+    "retrieved_titles": [
+      "Corrective Retrieval Augmented Generation",
+      "Corrective Retrieval Augmented Generation",
+      "Corrective Retrieval Augmented Generation",
+      "Corrective Retrieval Augmented Generation",
+      "Corrective Retrieval Augmented Generation"
+    ],
+    "hit_at_1": 1,
+    "hit_at_k": 1,
+    "mrr": 1.0,
+    "latency_ms": 634.1840640016017
+  },
+  {
+    "mode": "simple-vector",
+    "id": "q8",
+    "category": "foundation",
+    "question": "Which paper introduces retrieval-augmented generation for knowledge-intensive NLP tasks?",
+    "expected_titles": [
+      "Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks"
+    ],
+    "retrieved_titles": [
+      "Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks",
+      "RAG-Fusion: a New Take on Retrieval-Augmented Generation",
+      "Corrective Retrieval Augmented Generation",
+      "Retrieval-Augmented Generation Challenges",
+      "Retrieval-Augmented Generation for Large Language Models: A Survey"
+    ],
+    "hit_at_1": 1,
+    "hit_at_k": 1,
+    "mrr": 1.0,
+    "latency_ms": 1077.6466359966435
+  },
+  {
+    "mode": "simple-vector",
+    "id": "q9",
+    "category": "survey",
+    "question": "Which paper divides RAG into Naive RAG, Advanced RAG, and Modular RAG?",
+    "expected_titles": [
+      "Retrieval-Augmented Generation for Large Language Models: A Survey"
+    ],
+    "retrieved_titles": [
+      "RAG-Fusion: a New Take on Retrieval-Augmented Generation",
+      "Retrieval-Augmented Generation for Large Language Models: A Survey",
+      "Retrieval-Augmented Generation Challenges",
+      "RAGChecker: A Fine-grained Framework for Diagnosing Retrieval-Augmented Generation",
+      "Retrieval-Augmented Generation for Large Language Models: A Survey"
+    ],
+    "hit_at_1": 0,
+    "hit_at_k": 1,
+    "mrr": 0.5,
+    "latency_ms": 670.0499409998883
+  },
+  {
+    "mode": "simple-vector",
+    "id": "q10",
+    "category": "robustness",
+    "question": "Which paper focuses on robustness when retrieval goes wrong?",
+    "expected_titles": [
+      "Corrective Retrieval Augmented Generation"
+    ],
+    "retrieved_titles": [
+      "Corrective Retrieval Augmented Generation",
+      "Retrieval-Augmented Generation for Large Language Models: A Survey",
+      "Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks",
+      "Retrieval-Augmented Generation Challenges",
+      "RAGChecker: A Fine-grained Framework for Diagnosing Retrieval-Augmented Generation"
+    ],
+    "hit_at_1": 1,
+    "hit_at_k": 1,
+    "mrr": 1.0,
+    "latency_ms": 614.9783440050669
+  },
+  {
+    "mode": "simple-vector",
+    "id": "q11",
+    "category": "method",
+    "question": "Which paper trains a single LM to retrieve, generate, and critique?",
+    "expected_titles": [
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection"
+    ],
+    "retrieved_titles": [
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection",
+      "MultiHop-RAG: Benchmarking Retrieval-Augmented Generation for Multi-Hop Queries",
+      "Corrective Retrieval Augmented Generation",
+      "Adaptive-RAG: Learning to Adapt Retrieval-Augmented Large Language Models through Question Complexity",
+      "Embedding-Informed Adaptive Retrieval-Augmented Generation of Large Language Models"
+    ],
+    "hit_at_1": 1,
+    "hit_at_k": 1,
+    "mrr": 1.0,
+    "latency_ms": 616.7917619968648
+  },
+  {
+    "mode": "simple-vector",
+    "id": "q12",
+    "category": "survey",
+    "question": "哪篇论文系统综述了面向大语言模型的 RAG？",
+    "expected_titles": [
+      "Retrieval-Augmented Generation for Large Language Models: A Survey"
+    ],
+    "retrieved_titles": [
+      "RAG-Fusion: a New Take on Retrieval-Augmented Generation",
+      "MultiHop-RAG: Benchmarking Retrieval-Augmented Generation for Multi-Hop Queries",
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection",
+      "Retrieval-Augmented Generation for Large Language Models: A Survey",
+      "Retrieval-Augmented Generation Challenges"
+    ],
+    "hit_at_1": 0,
+    "hit_at_k": 1,
+    "mrr": 0.25,
+    "latency_ms": 2322.108643995307
+  },
+  {
+    "mode": "simple-vector",
+    "id": "q13",
+    "category": "foundation",
+    "question": "Which paper says providing provenance and updating world knowledge remain open problems?",
+    "expected_titles": [
+      "Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks"
+    ],
+    "retrieved_titles": [
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection",
+      "Retrieval-Augmented Generation Challenges",
+      "Retrieval-Augmented Generation for Large Language Models: A Survey",
+      "Corrective Retrieval Augmented Generation",
+      "MultiHop-RAG: Benchmarking Retrieval-Augmented Generation for Multi-Hop Queries"
+    ],
+    "hit_at_1": 0,
+    "hit_at_k": 0,
+    "mrr": 0.0,
+    "latency_ms": 1419.5678739997675
+  },
+  {
+    "mode": "simple-vector",
+    "id": "q14",
+    "category": "robustness",
+    "question": "Which paper uses a retrieval evaluator to trigger different retrieval actions?",
+    "expected_titles": [
+      "Corrective Retrieval Augmented Generation"
+    ],
+    "retrieved_titles": [
+      "Corrective Retrieval Augmented Generation",
+      "Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks",
+      "Adaptive-RAG: Learning to Adapt Retrieval-Augmented Large Language Models through Question Complexity",
+      "RAGChecker: A Fine-grained Framework for Diagnosing Retrieval-Augmented Generation",
+      "MultiHop-RAG: Benchmarking Retrieval-Augmented Generation for Multi-Hop Queries"
+    ],
+    "hit_at_1": 1,
+    "hit_at_k": 1,
+    "mrr": 1.0,
+    "latency_ms": 618.3272590060369
+  },
+  {
+    "mode": "simple-vector",
+    "id": "q15",
+    "category": "method",
+    "question": "Which paper argues that fixed-number indiscriminate retrieval can hurt LM versatility?",
+    "expected_titles": [
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection"
+    ],
+    "retrieved_titles": [
+      "Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks",
+      "Corrective Retrieval Augmented Generation",
+      "Adaptive-RAG: Learning to Adapt Retrieval-Augmented Large Language Models through Question Complexity",
+      "Retrieval-Augmented Generation for Large Language Models: A Survey",
+      "Retrieval-Augmented Generation Challenges"
+    ],
+    "hit_at_1": 0,
+    "hit_at_k": 0,
+    "mrr": 0.0,
+    "latency_ms": 2319.574166001985
+  },
+  {
+    "mode": "simple-vector",
+    "id": "q16",
+    "category": "challenge",
+    "question": "Which source explicitly lists retrieval noise, knowledge conflict, context limits, citation reliability, and freshness?",
+    "expected_titles": [
+      "Retrieval-Augmented Generation Challenges"
+    ],
+    "retrieved_titles": [
+      "Retrieval-Augmented Generation Challenges",
+      "Retrieval-Augmented Generation for Large Language Models: A Survey",
+      "Corrective Retrieval Augmented Generation",
+      "RAGChecker: A Fine-grained Framework for Diagnosing Retrieval-Augmented Generation",
+      "Embedding-Informed Adaptive Retrieval-Augmented Generation of Large Language Models"
+    ],
+    "hit_at_1": 1,
+    "hit_at_k": 1,
+    "mrr": 1.0,
+    "latency_ms": 668.9528719944065
+  },
+  {
+    "mode": "simple-vector",
+    "id": "q17",
+    "category": "foundation",
+    "question": "Which paper frames RAG as combining parametric and non-parametric memory?",
+    "expected_titles": [
+      "Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks"
+    ],
+    "retrieved_titles": [
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection",
+      "Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks",
+      "Retrieval-Augmented Generation Challenges",
+      "Retrieval-Augmented Generation for Large Language Models: A Survey",
+      "RAG-Fusion: a New Take on Retrieval-Augmented Generation"
+    ],
+    "hit_at_1": 0,
+    "hit_at_k": 1,
+    "mrr": 0.5,
+    "latency_ms": 901.9772660030867
+  },
+  {
+    "mode": "simple-vector",
+    "id": "q18",
+    "category": "survey",
+    "question": "Which paper emphasizes hallucination, outdated knowledge, and non-transparent reasoning as motivations for RAG?",
+    "expected_titles": [
+      "Retrieval-Augmented Generation for Large Language Models: A Survey"
+    ],
+    "retrieved_titles": [
+      "Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks",
+      "MultiHop-RAG: Benchmarking Retrieval-Augmented Generation for Multi-Hop Queries",
+      "Retrieval-Augmented Generation for Large Language Models: A Survey",
+      "Corrective Retrieval Augmented Generation",
+      "Retrieval-Augmented Generation Challenges"
+    ],
+    "hit_at_1": 0,
+    "hit_at_k": 1,
+    "mrr": 0.3333333333333333,
+    "latency_ms": 622.3031420013285
+  },
+  {
+    "mode": "simple-vector",
+    "id": "q19",
+    "category": "method",
+    "question": "Which paper improves factuality through retrieval and self-reflection?",
+    "expected_titles": [
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection"
+    ],
+    "retrieved_titles": [
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection",
+      "Corrective Retrieval Augmented Generation",
+      "Adaptive-RAG: Learning to Adapt Retrieval-Augmented Large Language Models through Question Complexity",
+      "Retrieval-Augmented Generation for Large Language Models: A Survey",
+      "RAG-Fusion: a New Take on Retrieval-Augmented Generation"
+    ],
+    "hit_at_1": 1,
+    "hit_at_k": 1,
+    "mrr": 1.0,
+    "latency_ms": 950.583802004985
+  },
+  {
+    "mode": "simple-vector",
+    "id": "q20",
+    "category": "robustness",
+    "question": "Which paper studies corrective retrieval augmentation for robust generation?",
+    "expected_titles": [
+      "Corrective Retrieval Augmented Generation"
+    ],
+    "retrieved_titles": [
+      "Corrective Retrieval Augmented Generation",
+      "Retrieval-Augmented Generation for Large Language Models: A Survey",
+      "RAG-Fusion: a New Take on Retrieval-Augmented Generation",
+      "RAGChecker: A Fine-grained Framework for Diagnosing Retrieval-Augmented Generation",
+      "Embedding-Informed Adaptive Retrieval-Augmented Generation of Large Language Models"
+    ],
+    "hit_at_1": 1,
+    "hit_at_k": 1,
+    "mrr": 1.0,
+    "latency_ms": 1529.4565410003997
+  },
+  {
+    "mode": "simple-hybrid",
+    "id": "q1",
+    "category": "paper_id",
+    "question": "Which paper introduces Self-RAG?",
+    "expected_titles": [
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection"
+    ],
+    "retrieved_titles": [
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection",
+      "Corrective Retrieval Augmented Generation",
+      "Retrieval-Augmented Generation for Large Language Models: A Survey",
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection",
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection"
+    ],
+    "hit_at_1": 1,
+    "hit_at_k": 1,
+    "mrr": 1.0,
+    "latency_ms": 664.018183000735
+  },
+  {
+    "mode": "simple-hybrid",
+    "id": "q2",
+    "category": "paper_id",
+    "question": "Which paper is a survey of retrieval-augmented generation for large language models?",
+    "expected_titles": [
+      "Retrieval-Augmented Generation for Large Language Models: A Survey"
+    ],
+    "retrieved_titles": [
+      "Retrieval-Augmented Generation for Large Language Models: A Survey",
+      "RAGChecker: A Fine-grained Framework for Diagnosing Retrieval-Augmented Generation",
+      "Embedding-Informed Adaptive Retrieval-Augmented Generation of Large Language Models",
+      "RAG-Fusion: a New Take on Retrieval-Augmented Generation",
+      "Corrective Retrieval Augmented Generation"
+    ],
+    "hit_at_1": 1,
+    "hit_at_k": 1,
+    "mrr": 1.0,
+    "latency_ms": 692.860973002098
+  },
+  {
+    "mode": "simple-hybrid",
+    "id": "q3",
+    "category": "paper_id",
+    "question": "Which paper proposes Corrective Retrieval Augmented Generation?",
+    "expected_titles": [
+      "Corrective Retrieval Augmented Generation"
+    ],
+    "retrieved_titles": [
+      "Corrective Retrieval Augmented Generation",
+      "Retrieval-Augmented Generation for Large Language Models: A Survey",
+      "Retrieval-Augmented Generation Challenges",
+      "RAG-Fusion: a New Take on Retrieval-Augmented Generation",
+      "RAGChecker: A Fine-grained Framework for Diagnosing Retrieval-Augmented Generation"
+    ],
+    "hit_at_1": 1,
+    "hit_at_k": 1,
+    "mrr": 1.0,
+    "latency_ms": 635.1241269949242
+  },
+  {
+    "mode": "simple-hybrid",
+    "id": "q4",
+    "category": "challenge",
+    "question": "What are the main challenges of RAG?",
+    "expected_titles": [
+      "Retrieval-Augmented Generation Challenges",
+      "Retrieval-Augmented Generation for Large Language Models: A Survey"
+    ],
+    "retrieved_titles": [
+      "Retrieval-Augmented Generation Challenges",
+      "Retrieval-Augmented Generation for Large Language Models: A Survey",
+      "RAGChecker: A Fine-grained Framework for Diagnosing Retrieval-Augmented Generation",
+      "RAG-Fusion: a New Take on Retrieval-Augmented Generation",
+      "MultiHop-RAG: Benchmarking Retrieval-Augmented Generation for Multi-Hop Queries"
+    ],
+    "hit_at_1": 1,
+    "hit_at_k": 1,
+    "mrr": 1.0,
+    "latency_ms": 940.2124019979965
+  },
+  {
+    "mode": "simple-hybrid",
+    "id": "q5",
+    "category": "challenge",
+    "question": "RAG 的主要挑战是什么？",
+    "expected_titles": [
+      "Retrieval-Augmented Generation Challenges",
+      "Retrieval-Augmented Generation for Large Language Models: A Survey"
+    ],
+    "retrieved_titles": [
+      "Retrieval-Augmented Generation Challenges",
+      "Retrieval-Augmented Generation for Large Language Models: A Survey",
+      "RAG-Fusion: a New Take on Retrieval-Augmented Generation",
+      "MultiHop-RAG: Benchmarking Retrieval-Augmented Generation for Multi-Hop Queries",
+      "RAGChecker: A Fine-grained Framework for Diagnosing Retrieval-Augmented Generation"
+    ],
+    "hit_at_1": 1,
+    "hit_at_k": 1,
+    "mrr": 1.0,
+    "latency_ms": 1607.095984996704
+  },
+  {
+    "mode": "simple-hybrid",
+    "id": "q6",
+    "category": "method",
+    "question": "How does Self-RAG use self-reflection during generation?",
+    "expected_titles": [
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection"
+    ],
+    "retrieved_titles": [
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection",
+      "Retrieval-Augmented Generation for Large Language Models: A Survey",
+      "Corrective Retrieval Augmented Generation",
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection",
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection"
+    ],
+    "hit_at_1": 1,
+    "hit_at_k": 1,
+    "mrr": 1.0,
+    "latency_ms": 1043.1525300009525
+  },
+  {
+    "mode": "simple-hybrid",
+    "id": "q7",
+    "category": "method",
+    "question": "How does CRAG correct retrieval errors?",
+    "expected_titles": [
+      "Corrective Retrieval Augmented Generation"
+    ],
+    "retrieved_titles": [
+      "Corrective Retrieval Augmented Generation",
+      "RAGChecker: A Fine-grained Framework for Diagnosing Retrieval-Augmented Generation",
+      "RAG-Fusion: a New Take on Retrieval-Augmented Generation",
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection",
+      "Corrective Retrieval Augmented Generation"
+    ],
+    "hit_at_1": 1,
+    "hit_at_k": 1,
+    "mrr": 1.0,
+    "latency_ms": 1294.5031589988503
+  },
+  {
+    "mode": "simple-hybrid",
+    "id": "q8",
+    "category": "foundation",
+    "question": "Which paper introduces retrieval-augmented generation for knowledge-intensive NLP tasks?",
+    "expected_titles": [
+      "Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks"
+    ],
+    "retrieved_titles": [
+      "Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks",
+      "RAG-Fusion: a New Take on Retrieval-Augmented Generation",
+      "Corrective Retrieval Augmented Generation",
+      "Retrieval-Augmented Generation for Large Language Models: A Survey",
+      "Retrieval-Augmented Generation Challenges"
+    ],
+    "hit_at_1": 1,
+    "hit_at_k": 1,
+    "mrr": 1.0,
+    "latency_ms": 1025.996534001024
+  },
+  {
+    "mode": "simple-hybrid",
+    "id": "q9",
+    "category": "survey",
+    "question": "Which paper divides RAG into Naive RAG, Advanced RAG, and Modular RAG?",
+    "expected_titles": [
+      "Retrieval-Augmented Generation for Large Language Models: A Survey"
+    ],
+    "retrieved_titles": [
+      "Retrieval-Augmented Generation for Large Language Models: A Survey",
+      "RAG-Fusion: a New Take on Retrieval-Augmented Generation",
+      "Retrieval-Augmented Generation Challenges",
+      "RAGChecker: A Fine-grained Framework for Diagnosing Retrieval-Augmented Generation",
+      "Corrective Retrieval Augmented Generation"
+    ],
+    "hit_at_1": 1,
+    "hit_at_k": 1,
+    "mrr": 1.0,
+    "latency_ms": 639.126836998912
+  },
+  {
+    "mode": "simple-hybrid",
+    "id": "q10",
+    "category": "robustness",
+    "question": "Which paper focuses on robustness when retrieval goes wrong?",
+    "expected_titles": [
+      "Corrective Retrieval Augmented Generation"
+    ],
+    "retrieved_titles": [
+      "Corrective Retrieval Augmented Generation",
+      "Retrieval-Augmented Generation for Large Language Models: A Survey",
+      "Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks",
+      "Retrieval-Augmented Generation Challenges",
+      "MultiHop-RAG: Benchmarking Retrieval-Augmented Generation for Multi-Hop Queries"
+    ],
+    "hit_at_1": 1,
+    "hit_at_k": 1,
+    "mrr": 1.0,
+    "latency_ms": 1715.7238190047792
+  },
+  {
+    "mode": "simple-hybrid",
+    "id": "q11",
+    "category": "method",
+    "question": "Which paper trains a single LM to retrieve, generate, and critique?",
+    "expected_titles": [
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection"
+    ],
+    "retrieved_titles": [
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection",
+      "Adaptive-RAG: Learning to Adapt Retrieval-Augmented Large Language Models through Question Complexity",
+      "Corrective Retrieval Augmented Generation",
+      "MultiHop-RAG: Benchmarking Retrieval-Augmented Generation for Multi-Hop Queries",
+      "Embedding-Informed Adaptive Retrieval-Augmented Generation of Large Language Models"
+    ],
+    "hit_at_1": 1,
+    "hit_at_k": 1,
+    "mrr": 1.0,
+    "latency_ms": 680.661042999418
+  },
+  {
+    "mode": "simple-hybrid",
+    "id": "q12",
+    "category": "survey",
+    "question": "哪篇论文系统综述了面向大语言模型的 RAG？",
+    "expected_titles": [
+      "Retrieval-Augmented Generation for Large Language Models: A Survey"
+    ],
+    "retrieved_titles": [
+      "RAG-Fusion: a New Take on Retrieval-Augmented Generation",
+      "MultiHop-RAG: Benchmarking Retrieval-Augmented Generation for Multi-Hop Queries",
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection",
+      "Retrieval-Augmented Generation for Large Language Models: A Survey",
+      "Retrieval-Augmented Generation Challenges"
+    ],
+    "hit_at_1": 0,
+    "hit_at_k": 1,
+    "mrr": 0.25,
+    "latency_ms": 649.1033800048172
+  },
+  {
+    "mode": "simple-hybrid",
+    "id": "q13",
+    "category": "foundation",
+    "question": "Which paper says providing provenance and updating world knowledge remain open problems?",
+    "expected_titles": [
+      "Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks"
+    ],
+    "retrieved_titles": [
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection",
+      "Retrieval-Augmented Generation for Large Language Models: A Survey",
+      "Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks",
+      "Retrieval-Augmented Generation Challenges",
+      "Corrective Retrieval Augmented Generation"
+    ],
+    "hit_at_1": 0,
+    "hit_at_k": 1,
+    "mrr": 0.3333333333333333,
+    "latency_ms": 2371.87731800077
+  },
+  {
+    "mode": "simple-hybrid",
+    "id": "q14",
+    "category": "robustness",
+    "question": "Which paper uses a retrieval evaluator to trigger different retrieval actions?",
+    "expected_titles": [
+      "Corrective Retrieval Augmented Generation"
+    ],
+    "retrieved_titles": [
+      "Corrective Retrieval Augmented Generation",
+      "Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks",
+      "RAGChecker: A Fine-grained Framework for Diagnosing Retrieval-Augmented Generation",
+      "Adaptive-RAG: Learning to Adapt Retrieval-Augmented Large Language Models through Question Complexity",
+      "Retrieval-Augmented Generation for Large Language Models: A Survey"
+    ],
+    "hit_at_1": 1,
+    "hit_at_k": 1,
+    "mrr": 1.0,
+    "latency_ms": 705.6260679964907
+  },
+  {
+    "mode": "simple-hybrid",
+    "id": "q15",
+    "category": "method",
+    "question": "Which paper argues that fixed-number indiscriminate retrieval can hurt LM versatility?",
+    "expected_titles": [
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection"
+    ],
+    "retrieved_titles": [
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection",
+      "Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks",
+      "Corrective Retrieval Augmented Generation",
+      "Adaptive-RAG: Learning to Adapt Retrieval-Augmented Large Language Models through Question Complexity",
+      "Retrieval-Augmented Generation Challenges"
+    ],
+    "hit_at_1": 1,
+    "hit_at_k": 1,
+    "mrr": 1.0,
+    "latency_ms": 897.1299300028477
+  },
+  {
+    "mode": "simple-hybrid",
+    "id": "q16",
+    "category": "challenge",
+    "question": "Which source explicitly lists retrieval noise, knowledge conflict, context limits, citation reliability, and freshness?",
+    "expected_titles": [
+      "Retrieval-Augmented Generation Challenges"
+    ],
+    "retrieved_titles": [
+      "Retrieval-Augmented Generation Challenges",
+      "Retrieval-Augmented Generation for Large Language Models: A Survey",
+      "RAGChecker: A Fine-grained Framework for Diagnosing Retrieval-Augmented Generation",
+      "Corrective Retrieval Augmented Generation",
+      "Embedding-Informed Adaptive Retrieval-Augmented Generation of Large Language Models"
+    ],
+    "hit_at_1": 1,
+    "hit_at_k": 1,
+    "mrr": 1.0,
+    "latency_ms": 956.2654649998876
+  },
+  {
+    "mode": "simple-hybrid",
+    "id": "q17",
+    "category": "foundation",
+    "question": "Which paper frames RAG as combining parametric and non-parametric memory?",
+    "expected_titles": [
+      "Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks"
+    ],
+    "retrieved_titles": [
+      "Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks",
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection",
+      "Retrieval-Augmented Generation Challenges",
+      "Embedding-Informed Adaptive Retrieval-Augmented Generation of Large Language Models",
+      "Retrieval-Augmented Generation for Large Language Models: A Survey"
+    ],
+    "hit_at_1": 1,
+    "hit_at_k": 1,
+    "mrr": 1.0,
+    "latency_ms": 984.961394999118
+  },
+  {
+    "mode": "simple-hybrid",
+    "id": "q18",
+    "category": "survey",
+    "question": "Which paper emphasizes hallucination, outdated knowledge, and non-transparent reasoning as motivations for RAG?",
+    "expected_titles": [
+      "Retrieval-Augmented Generation for Large Language Models: A Survey"
+    ],
+    "retrieved_titles": [
+      "Retrieval-Augmented Generation for Large Language Models: A Survey",
+      "MultiHop-RAG: Benchmarking Retrieval-Augmented Generation for Multi-Hop Queries",
+      "RAGChecker: A Fine-grained Framework for Diagnosing Retrieval-Augmented Generation",
+      "Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks",
+      "Corrective Retrieval Augmented Generation"
+    ],
+    "hit_at_1": 1,
+    "hit_at_k": 1,
+    "mrr": 1.0,
+    "latency_ms": 670.5888400028925
+  },
+  {
+    "mode": "simple-hybrid",
+    "id": "q19",
+    "category": "method",
+    "question": "Which paper improves factuality through retrieval and self-reflection?",
+    "expected_titles": [
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection"
+    ],
+    "retrieved_titles": [
+      "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection",
+      "Retrieval-Augmented Generation for Large Language Models: A Survey",
+      "Adaptive-RAG: Learning to Adapt Retrieval-Augmented Large Language Models through Question Complexity",
+      "Corrective Retrieval Augmented Generation",
+      "RAG-Fusion: a New Take on Retrieval-Augmented Generation"
+    ],
+    "hit_at_1": 1,
+    "hit_at_k": 1,
+    "mrr": 1.0,
+    "latency_ms": 2057.8424260020256
+  },
+  {
+    "mode": "simple-hybrid",
+    "id": "q20",
+    "category": "robustness",
+    "question": "Which paper studies corrective retrieval augmentation for robust generation?",
+    "expected_titles": [
+      "Corrective Retrieval Augmented Generation"
+    ],
+    "retrieved_titles": [
+      "Corrective Retrieval Augmented Generation",
+      "Retrieval-Augmented Generation for Large Language Models: A Survey",
+      "RAG-Fusion: a New Take on Retrieval-Augmented Generation",
+      "RAGChecker: A Fine-grained Framework for Diagnosing Retrieval-Augmented Generation",
+      "Embedding-Informed Adaptive Retrieval-Augmented Generation of Large Language Models"
+    ],
+    "hit_at_1": 1,
+    "hit_at_k": 1,
+    "mrr": 1.0,
+    "latency_ms": 643.1510629990953
+  }
+]
