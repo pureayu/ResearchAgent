@@ -133,7 +133,7 @@ app/memory/
 - `query_documents.py` 不直接负责 memory 存储细节
 - `working memory` 有独立类
 
-状态：`[ ]`
+状态：`[x]`
 
 ---
 
@@ -164,7 +164,17 @@ app/memory/
 - memory 读取与写回逻辑稳定
 - 历史长度可控
 
-状态：`[ ]`
+状态：`[x]`
+
+补充说明：
+- 第一版 `Working Memory` 已在 CLI 入口中闭环：
+  - 读取最近 session history
+  - 对明显追问做 `rewrite_question`
+  - 使用 `resolved_question` 检索
+  - 在回答后写回 `question / resolved_question / answer / citation_titles`
+- 当前实现刻意采取“保守补全”策略：
+  - 宁可保持原问题，也不引入历史中未出现的新实体
+  - 序号型指代（如“第二篇论文”）与抽象型指代（如“上一个方法”）仍需下一阶段增强
 
 ---
 

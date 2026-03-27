@@ -1,5 +1,106 @@
 # 实验日志
 
+## 2026-03-28 - working memory 接入 query rewrite，并收紧追问补全策略
+
+### 背景问题
+第一版 working memory 底座和 CLI 接线已经完成，但 history 仍停留在“读出来并打印”的阶段，没有真正参与检索问题理解。
+
+### 改动内容
+- 在 `app/llm_client.py` 中新增：
+  - `rewrite_question(question, history_text)`
+- 在 `scripts/query_documents.py` 中新增：
+  - `resolved_question`
+  - 检索和回答统一切换为基于 `resolved_question`
+  - 回答后将 `question / resolved_question / answer / citation_titles` 写回 session memory
+- 对 rewrite 策略进行收紧：
+  - 只在明显追问场景下触发 rewrite
+  - prompt 中明确禁止引入历史中未出现的新实体、新方法名和新术语
+  - 如果无法确定指代对象，则保持原问题不变
+
+### 验证结果
+- 基础代词补全场景通过：
+  - `什么是 RAG？`
+  - `它和微调有什么区别？`
+  - 第二轮稳定改写为：`RAG 和微调有什么区别？`
+- 序号型和抽象型追问场景表现为“保守但不稳定”：
+  - `第二篇论文的方法呢？`
+    - 已避免继续脑补具体论文名
+    - 但尚不能稳定解析“第二篇”对应哪篇论文
+  - `重点讲上一个方法的局限`
+    - 已避免无依据扩展出新的方法名
+    - 但抽象指代的解析仍不稳定
+- `data/memory/*.json` 已能正常记录：
+  - `question`
+  - `resolved_question`
+  - `answer`
+  - `citation_titles`
+
+### 当前判断
+- 第一版 working memory 已形成完整闭环：
+  - 读取 history
+  - rewrite 当前问题
+  - 用 `resolved_question` 检索
+  - 回答后写回 session
+- 当前更适合“保守补全”，不适合复杂指代解析
+- 复杂的序号型指代和抽象指代，需要下一阶段引入基于 citation / answer summary 的更细化 memory 解析
+
+### 下一步
+- 将调试输出改为可选开关，避免 CLI 正常使用时输出过多中间状态
+- 若继续增强 memory：
+  - 优先补“序号型指代解析”
+  - 暂不引入完整 intent recognition
+  - 暂不引入 research memory，先把 working memory 收稳
+
+## 2026-03-28 - 接入第一版 working memory（session-level）
+
+### 背景问题
+当前 `paper_assistant` 的问答链路仍然是单轮优先：
+- 每次 CLI 提问都默认独立处理；
+- 虽然已有多轮研究需求，但历史上下文没有统一的 session 语义；
+- 需要先补齐最小 working memory 底座，再考虑 question rewrite 和长期研究记忆。
+
+### 改动内容
+- 在 `app/memory/` 下新增第一版 memory 模块：
+  - `models.py`
+    - `ConversationTurn`
+    - `ConversationSession`
+  - `store.py`
+    - session JSON 读写
+  - `manager.py`
+    - `append_turn`
+    - `get_recent_turns`
+    - `format_history`
+    - `has_history`
+    - `clear_session`
+- 在 `app/config.py` 中新增：
+  - `memory_dir`
+- 在 `scripts/query_documents.py` 中新增：
+  - `--session-id`
+  - `MemoryManager` 初始化
+  - history 读取与调试输出
+- 在新仓库中补齐 `.env`，并重新构建 `simple` 索引：
+  - `Indexed 643 new chunks into data/vector_store/simple_chunks.json`
+
+### 验证结果
+- 临时测试脚本已验证：
+  - `append_turn()` 可写入 `data/memory/demo.json`
+  - `format_history()` 可正确读取并格式化最近多轮 history
+- 正式入口已验证：
+  - `python3 scripts/query_documents.py "什么是 RAG？" --backend simple --no-stream --session-id demo`
+  - 能显示已有 `history`
+  - `simple` 后端可正常召回本地 citations
+  - LLM 可基于 citations 正常生成回答
+
+### 当前判断
+- working memory 的“存 / 读 / 接入 CLI 入口”已经打通；
+- 这一步主要完成了 memory read/write 底座；
+- question rewrite 与检索接线见后续 2026-03-28 更新条目。
+
+### 下一步
+- 在 `app/llm_client.py` 中新增 `rewrite_question()`；
+- 若存在 `session_id` 且有 history，则先做追问补全，再用 `resolved_question` 检索；
+- 问答结束后，将 `question / resolved_question / answer / citation_titles` 写回 working memory。
+
 ## 2026-03-26 - stronger researcher loop（evidence gap -> rewrite query -> re-search）
 
 ### 背景问题

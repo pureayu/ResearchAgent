@@ -27,9 +27,11 @@ notes/
 *.log
 
 paper_assistant/data/raw/
+paper_assistant/data/memory/
 paper_assistant/data/processed/
 paper_assistant/data/vector_store/
 paper_assistant/data/rag_store/
+paper_assistant/tmp_test_memory.py
 
 helloagents_deepresearch/backend/notes/
 helloagents_deepresearch/frontend/.env.local

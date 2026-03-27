@@ -21,6 +21,7 @@ class Settings(BaseModel):
     metadata_file: Path = PROJECT_ROOT / "data" / "metadata" / "documents.json"
     manifest_file: Path = PROJECT_ROOT / "data" / "metadata" / "document_manifest.json"
     simple_index_file: Path = PROJECT_ROOT / "data" / "vector_store" / "simple_chunks.json"
+    memory_dir: Path = PROJECT_ROOT / "data" / "memory"
 
     llm_model: str | None = Field(default_factory=lambda: os.getenv("LLM_MODEL"))
     llm_api_key: str | None = Field(default_factory=lambda: os.getenv("LLM_API_KEY"))
@@ -44,6 +45,7 @@ class Settings(BaseModel):
             self.outputs_dir,
             self.rag_working_dir,
             self.vector_store_dir,
+            self.memory_dir,
         ):
             path.mkdir(parents=True, exist_ok=True)
 

@@ -45,6 +45,50 @@ class LiteratureLLM:
         ]
         return self._complete(messages, stream=stream, on_chunk=on_chunk)
 
+    def rewrite_question(
+        self,
+        question: str,
+        history_text: str,
+    ) -> str:
+        if not history_text.strip():
+            return question
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "你是一个研究问答系统中的问题补全器。"
+                    "你的任务是根据历史对话，将当前用户问题改写成一个独立、明确、适合检索的问题。"
+                    "如果当前问题已经完整明确，直接原样返回。"
+                    "如果无法从历史对话中明确确定指代对象，也直接原样返回。"
+                    "禁止引入历史中没有明确出现的新论文名、新方法名或新术语。"
+                    "禁止根据常识或猜测扩展问题。"
+                    "不要回答问题，只做改写。"
+                    "只输出改写后的问题，不要解释，不要添加额外内容。"
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"历史对话：\n{history_text}\n\n"
+                    f"当前问题：\n{question}\n\n"
+                    "请输出改写后的独立问题："
+                ),
+            },
+        ]
+        try:
+            response = self.client.chat.completions.create(
+                model=self.settings.llm_model,
+                messages=messages,
+                temperature=0.0,
+                stream=False,
+            )
+            rewritten = (response.choices[0].message.content or "").strip()
+            rewritten = rewritten.strip("`\"' ")
+            rewritten = rewritten.splitlines()[0].strip() if rewritten else ""
+            return rewritten or question
+        except Exception:
+            return question
+
     def summarize_topic(
         self,
         topic: str,
