@@ -49,17 +49,18 @@ class LiteratureLLM:
         self,
         question: str,
         history_text: str,
+        research_notes_text: str = "",
     ) -> str:
-        if not history_text.strip():
+        if not history_text.strip() and not research_notes_text.strip():
             return question
         messages = [
             {
                 "role": "system",
                 "content": (
                     "你是一个研究问答系统中的问题补全器。"
-                    "你的任务是根据历史对话，将当前用户问题改写成一个独立、明确、适合检索的问题。"
+                    "你的任务是根据历史对话和已有研究结论，将当前用户问题改写成一个独立、明确、适合检索的问题。"
                     "如果当前问题已经完整明确，直接原样返回。"
-                    "如果无法从历史对话中明确确定指代对象，也直接原样返回。"
+                    "如果无法从历史对话或研究结论中明确确定指代对象，也直接原样返回。"
                     "禁止引入历史中没有明确出现的新论文名、新方法名或新术语。"
                     "禁止根据常识或猜测扩展问题。"
                     "不要回答问题，只做改写。"
@@ -70,6 +71,7 @@ class LiteratureLLM:
                 "role": "user",
                 "content": (
                     f"历史对话：\n{history_text}\n\n"
+                    f"研究结论：\n{research_notes_text}\n\n"
                     f"当前问题：\n{question}\n\n"
                     "请输出改写后的独立问题："
                 ),
@@ -117,6 +119,44 @@ class LiteratureLLM:
             },
         ]
         return self._complete(messages, stream=stream, on_chunk=on_chunk)
+
+    def compress_research_note(
+        self,
+        question: str,
+        answer: str,
+        citation_titles: list[str],
+    ) -> str:
+        if not answer.strip():
+            return answer
+
+        citation_text = "\n".join(f"- {title}" for title in citation_titles) or "- 无"
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "你是研究结论压缩助手。"
+                    "请把给定问答压缩成 1 到 3 句稳定、可复用的研究结论。"
+                    "保留关键定义、差异、挑战或方法结论。"
+                    "不要输出引用标号，不要写成长段落，不要加入材料中没有的新事实。"
+                    "只输出压缩后的结论，不要解释。"
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"问题：{question}\n\n"
+                    f"参考标题：\n{citation_text}\n\n"
+                    f"原始回答：\n{answer}\n\n"
+                    "请输出压缩后的研究结论："
+                ),
+            },
+        ]
+        try:
+            compressed = self._complete(messages, stream=False)
+            compressed = compressed.strip()
+            return compressed or answer
+        except Exception:
+            return answer
 
     def judge_answer(
         self,

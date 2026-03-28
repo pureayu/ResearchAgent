@@ -27,22 +27,28 @@
   - [x] 新建 `app/memory/working_memory.py`
   - [x] 将 `append_turn / get_recent_turns / has_history / format_history / clear_session` 从 `manager.py` 移入 `WorkingMemory`
   - [x] 将 `manager.py` 收敛为薄封装，作为后续 `working + research` 的统一入口
-- [ ] 验证拆分后 CLI 行为不变
-  - [ ] 同一 `session_id` 下追问补全仍可用
-  - [ ] `resolved_question` 仍参与检索
-  - [ ] 回答后写回 session JSON 仍正常
-- [ ] 开始开发 `research_memory.py`
-  - [ ] 定义最小 `ResearchNote` 数据结构
-  - [ ] 设计 research memory 的存储格式
-  - [ ] 明确 `append_note / list_notes / format_notes / clear_notes` 四个最小接口
-  - [ ] 将 `MemoryManager` 扩展为 `working + research` 双入口
+- [x] 验证拆分后 CLI 行为不变
+  - [x] 同一 `session_id` 下追问补全仍可用
+  - [x] `resolved_question` 仍参与检索
+  - [x] 回答后写回 session JSON 仍正常
+- [x] 开始开发 `research_memory.py`
+  - [x] 定义最小 `ResearchNote` 数据结构
+  - [x] 设计 research memory 的存储格式
+  - [x] 明确 `append_note / list_notes / format_notes / clear_notes` 四个最小接口
+  - [x] 将 `MemoryManager` 扩展为 `working + research` 双入口
+- [x] 验证 research memory 最小骨架
+  - [x] `append_note()` 可正常落盘到 `data/memory/research/{session_id}.json`
+  - [x] `format_notes()` 可正常读回并格式化输出
+  - [x] 将 `research_memory` 接到真实问答闭环中
+  - [x] 第一版“高价值结论”规则已落地
+  - [x] 自动写 note 前会先压缩长回答为更短的 `conclusion`
 
 ## 下一阶段增强
 
 - [ ] 为 working memory 增加“最近几轮 + query 检索”能力
-  - [ ] 新增 `search_relevant_turns(session_id, query, limit)`
-  - [ ] 第一版优先采用轻量打分（关键词 / TF-IDF），不引入新的 embedding 依赖
-  - [ ] 在 `build_context` 中组合“最近几轮 + 相关历史”
+  - [x] 新增 `search_relevant_turns(session_id, query, limit)`
+  - [x] 第一版优先采用轻量打分（关键词），不引入新的 embedding 依赖
+  - [x] 在 rewrite 前组合“最近几轮 + 相关历史”
 - [ ] 为 working memory 增加“重要轮次优先”能力
   - [ ] 区分普通 turn 与高价值 turn
   - [ ] 为后续 summary / consolidate 做准备
@@ -53,9 +59,9 @@
 
 ## 后续工作
 
-- [ ] 完整引入 `research_memory.py`
-  - [ ] 沉淀高价值研究结论，而不是只保存 turn history
-  - [ ] 将 research memory 接到真实问答闭环中
+- [ ] 让后续问题显式读取并使用 `research_memory`
+  - [x] 在 query rewrite 中引入 `format_notes(session_id)`
+  - [ ] 在上下文构建中明确 notes 与 working history 的优先级和去重策略
 - [ ] 做 working / research memory 的 consolidate 规则
   - [ ] working memory 保持短期、受限
   - [ ] 高价值结论进入 research memory

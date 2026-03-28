@@ -20,3 +20,18 @@ class ConversationTurn(BaseModel):
 class ConversationSession(BaseModel):
     session_id: str
     turns: list[ConversationTurn] = Field(default_factory=list)
+
+
+#一条研究结论
+class ResearchNote(BaseModel):
+    note_id: int
+    session_id: str
+    question: str
+    conclusion: str
+    citation_titles: list[str] = Field(default_factory=list)
+    created_at: str
+
+#一个session下的一组研究结论
+class ResearchNoteSession(BaseModel):
+    session_id: str
+    notes: list[ResearchNote] = Field(default_factory=list)

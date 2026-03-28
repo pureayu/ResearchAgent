@@ -1,6 +1,7 @@
 from pathlib import Path
 
-from app.memory.models import ConversationTurn
+from app.memory.models import ConversationTurn, ResearchNote
+from app.memory.research_memory import ResearchMemory
 from app.memory.working_memory import WorkingMemory
 
 
@@ -14,6 +15,7 @@ class MemoryManager:
 
     def __init__(self, memory_dir: Path, max_turns: int = 5):
         self.working_memory = WorkingMemory(memory_dir, max_turns=max_turns)
+        self.research_memory = ResearchMemory(memory_dir)
 
     def append_turn(
         self,
@@ -50,5 +52,52 @@ class MemoryManager:
             max_turns=max_turns,
         )
 
+    def search_relevant_turns(
+        self,
+        session_id: str,
+        query: str,
+        limit: int = 3,
+    ) -> list[ConversationTurn]:
+        return self.working_memory.search_relevant_turns(
+            session_id=session_id,
+            query=query,
+            limit=limit,
+        )
+
+    def format_relevant_turns(
+        self,
+        session_id: str,
+        query: str,
+        limit: int = 3,
+    ) -> str:
+        return self.working_memory.format_relevant_turns(
+            session_id=session_id,
+            query=query,
+            limit=limit,
+        )
+
     def clear_session(self, session_id: str) -> None:
         self.working_memory.clear_session(session_id)
+
+    def append_note(
+        self,
+        session_id: str,
+        question: str,
+        conclusion: str,
+        citation_titles: list[str] | None = None,
+    ) -> None:
+        self.research_memory.append_note(
+            session_id=session_id,
+            question=question,
+            conclusion=conclusion,
+            citation_titles=citation_titles,
+        )
+
+    def list_notes(self, session_id: str) -> list[ResearchNote]:
+        return self.research_memory.list_notes(session_id)
+
+    def format_notes(self, session_id: str) -> str:
+        return self.research_memory.format_notes(session_id)
+
+    def clear_notes(self, session_id: str) -> None:
+        self.research_memory.clear_notes(session_id)

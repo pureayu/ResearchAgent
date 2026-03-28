@@ -1,5 +1,54 @@
 # 实验日志
 
+## 2026-03-28 - research memory 最小骨架落地
+
+### 背景问题
+working memory 已经完成 session 级闭环，但系统仍然只能记住“最近几轮”，还不能把已经沉淀出来的研究结论单独保存下来。
+
+### 改动内容
+- 在 `app/memory/models.py` 中新增：
+  - `ResearchNote`
+  - `ResearchNoteSession`
+- 在 `app/memory/store.py` 中新增：
+  - `load_research_note_session(session_id)`
+  - `save_research_note_session(note_session)`
+- 在 `app/memory/research_memory.py` 中实现：
+  - `append_note(...)`
+  - `list_notes(session_id)`
+  - `format_notes(session_id)`
+  - `clear_notes(session_id)`
+- 在 `app/memory/manager.py` 中扩展统一入口：
+  - `append_note(...)`
+  - `list_notes(...)`
+  - `format_notes(...)`
+  - `clear_notes(...)`
+
+### 验证结果
+- 通过 `MemoryManager.append_note()` 写入测试 note：
+  - session: `demo_research`
+  - question: `RAG 的主要挑战是什么？`
+- `format_notes("demo_research")` 返回正常：
+  - `[Note 1] 问题：...`
+  - `结论：...`
+- 落盘文件正常生成：
+  - `data/memory/research/demo_research.json`
+
+### 当前判断
+- research memory 的最小骨架已经成立：
+  - 数据模型
+  - 存储
+  - 业务接口
+  - manager 统一入口
+- 当前还只是“手动写入 research note”
+- 下一步不是继续扩数据结构，而是定义：
+  - 什么情况下把一轮问答自动沉淀成 research note
+  - 后续 query 怎么读取 research notes
+
+### 下一步
+- 定义第一版“高价值结论”规则
+- 在真实问答闭环中自动 `append_note()`
+- 后续再考虑 research note 的检索与 consolidate
+
 ## 2026-03-28 - working memory 接入 query rewrite，并收紧追问补全策略
 
 ### 背景问题

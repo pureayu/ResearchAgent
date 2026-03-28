@@ -209,7 +209,34 @@ app/memory/
 - 一次研究会话中的关键结论可被后续问题复用
 - note 与普通对话轮次区分开
 
-状态：`[ ]`
+状态：`[~]`
+
+当前进展：
+- 已新增：
+  - `ResearchNote`
+  - `ResearchNoteSession`
+  - `research_memory.py`
+- 已实现最小接口：
+  - `append_note(...)`
+  - `list_notes(session_id)`
+  - `format_notes(session_id)`
+  - `clear_notes(session_id)`
+- `MemoryManager` 已扩展为 `working + research` 双入口
+- 已验证：
+  - `append_note()` 可正常落盘到 `data/memory/research/{session_id}.json`
+  - `format_notes()` 可正常读回并输出
+
+尚未完成：
+- 已把 `research_memory` 自动接入真实问答闭环
+- 已定义第一版“高价值结论”规则：
+  - 回答非空
+  - citation 数量 >= 1
+  - 回答长度达到最小阈值
+  - 问题命中定义 / 区别 / 挑战 / 局限 / 核心 / 总结 / 方法等模式
+- 自动写 note 前已增加结论压缩步骤，避免直接存整段回答
+- 仍未完成：
+  - 后续 query 尚未主动消费 research notes
+  - 尚未定义 notes 与 working history 的上下文组合策略
 
 ---
 

@@ -56,6 +56,31 @@ def _should_rewrite_question(question: str) -> bool:
     return any(re.search(pattern, question, re.IGNORECASE) for pattern in follow_up_patterns)
 
 
+def _should_promote_to_research_note(
+    question: str,
+    answer: str,
+    citation_count: int,
+) -> bool:
+    if not answer.strip():
+        return False
+    if citation_count < 1:
+        return False
+    if len(answer.strip()) < 80:
+        return False
+
+    research_patterns = [
+        r"什么是",
+        r"区别",
+        r"挑战",
+        r"局限",
+        r"核心",
+        r"定义",
+        r"总结",
+        r"方法",
+    ]
+    return any(re.search(pattern, question, re.IGNORECASE) for pattern in research_patterns)
+
+
 async def main() -> None:
     args = build_parser().parse_args()
     settings = get_settings()
@@ -65,10 +90,29 @@ async def main() -> None:
     resolved_question = args.question
     llm = LiteratureLLM(settings)
     history_text = ""
+    relevant_history_text = ""
+    research_notes_text = ""
     if args.session_id:
         history_text = memory_manager.format_history(args.session_id)
-    if history_text and _should_rewrite_question(args.question):
-        resolved_question = llm.rewrite_question(args.question, history_text)
+        relevant_history_text = memory_manager.format_relevant_turns(
+            args.session_id,
+            args.question,
+            limit=3,
+        )
+        research_notes_text = memory_manager.format_notes(args.session_id)
+    rewrite_history_text = history_text
+    if relevant_history_text:
+        rewrite_history_text = (
+            f"{history_text}\n\n相关历史：\n{relevant_history_text}"
+            if history_text
+            else f"相关历史：\n{relevant_history_text}"
+        )
+    if (rewrite_history_text or research_notes_text) and _should_rewrite_question(args.question):
+        resolved_question = llm.rewrite_question(
+            args.question,
+            rewrite_history_text,
+            research_notes_text=research_notes_text,
+        )
         print("\n=== RESOLVED QUESTION ===")
         print(resolved_question)
     print("\n=== 回答 ===")
@@ -113,6 +157,22 @@ async def main() -> None:
             citation_titles=[citation.title for citation in citations],
 
         )
+        if _should_promote_to_research_note(
+            question=resolved_question,
+            answer=answer,
+            citation_count=len(citations),
+        ):
+            compressed_conclusion = llm.compress_research_note(
+                question=resolved_question,
+                answer=answer,
+                citation_titles=[citation.title for citation in citations],
+            )
+            memory_manager.append_note(
+                session_id=args.session_id,
+                question=resolved_question,
+                conclusion=compressed_conclusion,
+                citation_titles=[citation.title for citation in citations],
+            )
     print("\n=== 引用来源 ===")
     if not citations:
         print("没有检索到可展示的引用。")
