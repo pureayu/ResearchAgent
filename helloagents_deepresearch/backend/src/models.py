@@ -33,6 +33,8 @@ class TodoItem:
 
 @dataclass(kw_only=True)
 class SummaryState:
+    #记录每轮的id号， 一次完整研究流程的编号
+    run_id: Optional[str] = field(default=None)
     research_topic: str = field(default=None)  # Report topic
     search_query: str = field(default=None)  # Deprecated placeholder
     web_research_results: Annotated[list, operator.add] = field(default_factory=list)

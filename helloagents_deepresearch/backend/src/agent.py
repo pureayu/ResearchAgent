@@ -25,6 +25,7 @@ from services.reporter import ReportingService
 from services.search import dispatch_search, prepare_research_context
 from services.summarizer import SummarizationService
 from services.tool_events import ToolCallTracker
+from services.memory import MemoryService
 
 logger = logging.getLogger(__name__)
 LOCAL_LIBRARY_BACKEND = "local_library"
@@ -58,6 +59,7 @@ class DeepResearchAgent:
         """Initialise the coordinator with configuration and shared tools."""
         self.config = config or Configuration.from_env()
         self.llm = self._init_llm()
+        self.memory_service = MemoryService(self.config)
 
         self.note_tool = (
             NoteTool(workspace=self.config.notes_workspace)
@@ -147,6 +149,8 @@ class DeepResearchAgent:
     def run(self, topic: str) -> SummaryStateOutput:
         """Execute the research workflow and return the final report."""
         state = SummaryState(research_topic=topic)
+        state.run_id = self.memory_service.start_run(topic)
+        #分解任务
         state.todo_items = self.planner.plan_todo_list(state)
         self._drain_tool_events(state)
 
@@ -157,13 +161,13 @@ class DeepResearchAgent:
         for task in state.todo_items:
             for _ in self._execute_task(state, task, emit_stream=False):
                 pass
-
+        #一个完整的Markdown报告字符串
         report = self.reporting.generate_report(state)
         self._drain_tool_events(state)
         state.structured_report = report
         state.running_summary = report
         self._persist_final_report(state, report)
-
+        self.memory_service.save_report_memory(state.run_id, state, report)
         return SummaryStateOutput(
             running_summary=report,
             report_markdown=report,
@@ -173,6 +177,7 @@ class DeepResearchAgent:
     def run_stream(self, topic: str) -> Iterator[dict[str, Any]]:
         """Execute the workflow yielding incremental progress events."""
         state = SummaryState(research_topic=topic)
+        state.run_id = self.memory_service.start_run(topic)
         logger.debug("Starting streaming research: topic=%s", topic)
         yield {"type": "status", "message": "初始化研究流程"}
 
@@ -300,6 +305,7 @@ class DeepResearchAgent:
         state.running_summary = report
 
         note_event = self._persist_final_report(state, report)
+        self.memory_service.save_report_memory(state.run_id, state, report)
         if note_event:
             yield note_event
 
@@ -330,6 +336,7 @@ class DeepResearchAgent:
         local_backend = LOCAL_LIBRARY_BACKEND
         task.latest_query = task.query
 
+        #把过程中的状态/结果事件往外推送，用于后续展示。
         for event in self._emit_search_stage(
             task,
             backend=LOCAL_LIBRARY_BACKEND,
@@ -481,6 +488,7 @@ class DeepResearchAgent:
                 }
             else:
                 self._drain_tool_events(state)
+            self.memory_service.save_task_memory(state.run_id, task)
             return
         if not emit_stream:
             self._drain_tool_events(state)
@@ -539,7 +547,7 @@ class DeepResearchAgent:
 
         task.summary = summary_text.strip() if summary_text else "暂无可用信息"
         task.status = "completed"
-
+        self.memory_service.save_task_memory(state.run_id, task)
         with self._state_lock:
             state.web_research_results.append(context)
             state.sources_gathered.append(sources_summary)
@@ -691,7 +699,11 @@ class DeepResearchAgent:
     def _looks_like_local_research_query(self, query: str) -> bool:
         lowered = query.lower()
         return any(term in lowered for term in LOCAL_QUERY_HINTS)
-
+    
+    # 基于当前 base_query
+    # 结合 gap_reason
+    # 再结合 task.title/task.intent
+    # 拼出一个更适合补检索的新 query
     def _build_followup_query(
         self,
         task: TodoItem,
