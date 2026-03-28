@@ -101,8 +101,18 @@ def dispatch_search(
                 }
             )
     except Exception as exc:  # pragma: no cover - defensive logging
-        logger.exception("Search backend %s failed: %s", search_api, exc)
-        raise
+        message = str(exc)
+        if "No results found" in message or "搜索失败" in message:
+            logger.warning("Search backend %s returned no results: %s", search_api, exc)
+            raw_response = {
+                "results": [],
+                "backend": search_api,
+                "answer": None,
+                "notices": [message],
+            }
+        else:
+            logger.exception("Search backend %s failed: %s", search_api, exc)
+            raise
     
     #如果传入的是字符串则结构化成字典
     if isinstance(raw_response, str):

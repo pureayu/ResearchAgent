@@ -97,6 +97,21 @@ class Configuration(BaseModel):
         title="LLM Model ID",
         description="Optional model identifier for custom OpenAI-compatible services",
     )
+    embedding_model: Optional[str] = Field(
+        default=None,
+        title="Embedding Model ID",
+        description="Optional embedding model identifier for semantic memory retrieval",
+    )
+    embedding_api_key: Optional[str] = Field(
+        default=None,
+        title="Embedding API Key",
+        description="Optional API key for embedding requests",
+    )
+    embedding_base_url: Optional[str] = Field(
+        default=None,
+        title="Embedding Base URL",
+        description="Optional base URL for embedding requests",
+    )
 
     @classmethod
     def from_env(cls, overrides: Optional[dict[str, Any]] = None) -> "Configuration":
@@ -117,6 +132,9 @@ class Configuration(BaseModel):
             "llm_api_key": os.getenv("LLM_API_KEY"),
             "llm_model_id": os.getenv("LLM_MODEL_ID") or os.getenv("LLM_MODEL"),
             "llm_base_url": os.getenv("LLM_BASE_URL"),
+            "embedding_model": os.getenv("EMBEDDING_MODEL"),
+            "embedding_api_key": os.getenv("EMBEDDING_API_KEY"),
+            "embedding_base_url": os.getenv("EMBEDDING_BASE_URL"),
             "lmstudio_base_url": os.getenv("LMSTUDIO_BASE_URL"),
             "ollama_base_url": os.getenv("OLLAMA_BASE_URL"),
             "max_web_research_loops": os.getenv("MAX_WEB_RESEARCH_LOOPS"),
@@ -159,3 +177,8 @@ class Configuration(BaseModel):
         """Best-effort resolution of the model identifier to use."""
 
         return self.llm_model_id or self.local_llm
+
+    def resolved_embedding_model(self) -> Optional[str]:
+        """Best-effort resolution of the embedding model identifier to use."""
+
+        return self.embedding_model

@@ -50,6 +50,10 @@
             </label>
           </section>
 
+          <p v-if="currentSessionId" class="hint muted">
+            当前将继续同一研究会话
+          </p>
+
           <div class="form-actions">
             <button class="submit" type="submit" :disabled="loading">
               <span class="submit-label">
@@ -61,7 +65,7 @@
                 >
                   <circle cx="12" cy="12" r="9" stroke-width="3" />
                 </svg>
-                {{ loading ? "研究进行中..." : "开始研究" }}
+                {{ loading ? "研究进行中..." : currentSessionId ? "继续研究" : "开始研究" }}
               </span>
             </button>
             <button
@@ -114,6 +118,13 @@
             <p>{{ form.searchApi }}</p>
           </div>
 
+          <div class="info-item" v-if="currentSessionId">
+            <label>会话标识</label>
+            <p class="session-display" :title="currentSessionId">
+              {{ currentSessionId }}
+            </p>
+          </div>
+
           <div class="info-item" v-if="totalTasks > 0">
             <label>研究进度</label>
             <div class="progress-bar">
@@ -121,6 +132,18 @@
             </div>
             <p class="progress-text">{{ completedTasks }} / {{ totalTasks }} 任务完成</p>
           </div>
+        </div>
+
+        <div class="history-panel" v-if="conversationTurns.length">
+          <label>会话历史</label>
+          <ul class="history-list">
+            <li v-for="turn in conversationTurns" :key="turn.id" class="history-item">
+              <button type="button" class="history-button" @click="restoreTurn(turn)">
+                <span class="history-title">{{ turn.topic }}</span>
+                <span class="history-meta">{{ turn.completedTasks }} / {{ turn.totalTasks }} 任务</span>
+              </button>
+            </li>
+          </ul>
         </div>
 
         <div class="sidebar-actions">
@@ -142,7 +165,7 @@
           <div class="status-main">
             <div class="status-chip" :class="{ active: loading }">
               <span class="dot"></span>
-              {{ loading ? "研究进行中" : "研究流程完成" }}
+              {{ loading ? loadingLabel : "研究流程完成" }}
             </div>
             <span class="status-meta">
               任务进度：{{ completedTasks }} / {{ totalTasks || todoTasks.length || 1 }}
@@ -243,8 +266,8 @@
                 <span class="metric-label">证据数量</span>
                 <strong>{{ currentTaskEvidenceCount }}</strong>
               </div>
-              <div class="metric-card">
-                <span class="metric-label">Top Score</span>
+              <div class="metric-card" v-if="showComparableTopScore">
+                <span class="metric-label">排序分数（内部）</span>
                 <strong>{{ formatScore(currentTaskTopScore) }}</strong>
               </div>
             </section>
@@ -321,7 +344,10 @@
               :class="{ 'block-highlight': summaryHighlight }"
             >
               <h3>任务总结</h3>
-              <pre class="block-pre">{{ currentTaskSummary || "暂无可用信息" }}</pre>
+              <div
+                class="block-markdown"
+                v-html="renderMarkdown(currentTaskSummary || '暂无可用信息')"
+              ></div>
             </section>
 
             <section
@@ -380,8 +406,29 @@
           :class="{ 'block-highlight': reportHighlight }"
         >
           <h3>最终报告</h3>
-          <pre class="block-pre">{{ reportMarkdown }}</pre>
+          <div
+            class="block-markdown report-markdown"
+            v-html="renderMarkdown(reportMarkdown)"
+          ></div>
         </div>
+
+        <form class="chat-composer" @submit.prevent="handleFollowUpSubmit">
+          <textarea
+            v-model="composerInput"
+            class="chat-input"
+            rows="3"
+            :disabled="loading"
+            placeholder="继续追问，例如：继续补充刚才没讲清楚的部分"
+          ></textarea>
+          <div class="chat-actions">
+            <button class="secondary-btn" type="button" @click="goBack" :disabled="loading">
+              返回首页
+            </button>
+            <button class="submit" type="submit" :disabled="loading || !composerInput.trim()">
+              {{ loading ? "研究进行中..." : "发送追问" }}
+            </button>
+          </div>
+        </form>
       </section>
 
     </div>
@@ -389,7 +436,7 @@
 </template>
 
 <script lang="ts" setup>
-import { computed, onBeforeUnmount, reactive, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 
 import {
   runResearchStream,
@@ -451,6 +498,19 @@ interface TodoTaskView {
   traceEntries: TaskTraceEntry[];
 }
 
+interface ConversationTurn {
+  id: number;
+  topic: string;
+  reportMarkdown: string;
+  completedTasks: number;
+  totalTasks: number;
+  sessionId: string | null;
+  timestamp: number;
+}
+
+const SESSION_STORAGE_KEY = "deepresearch_session_id";
+const HISTORY_STORAGE_KEY = "deepresearch_conversation_turns";
+
 const form = reactive({
   topic: "",
   searchApi: ""
@@ -461,6 +521,11 @@ const error = ref("");
 const progressLogs = ref<string[]>([]);
 const logsCollapsed = ref(false);
 const isExpanded = ref(false);
+const currentSessionId = ref<string | null>(null);
+const currentRunId = ref<string | null>(null);
+const conversationTurns = ref<ConversationTurn[]>([]);
+const composerInput = ref("");
+const loadingLabel = ref("研究进行中");
 
 const todoTasks = ref<TodoTaskView[]>([]);
 const activeTaskId = ref<number | null>(null);
@@ -534,6 +599,71 @@ const currentTaskTopScore = computed(
 const currentTaskLatestQuery = computed(
   () => currentTask.value?.latestQuery ?? ""
 );
+const showComparableTopScore = computed(
+  () => currentTaskSearchBackend.value === "local_library"
+);
+
+function escapeHtml(raw: string): string {
+  return raw
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+function renderInlineMarkdown(raw: string): string {
+  return raw
+    .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+    .replace(/__(.+?)__/g, "<strong>$1</strong>")
+    .replace(/`([^`]+)`/g, "<code>$1</code>");
+}
+
+function renderMarkdown(raw: string): string {
+  const escaped = escapeHtml(raw || "").replace(/\r\n/g, "\n");
+  const lines = escaped.split("\n");
+  const blocks: string[] = [];
+  let inList = false;
+
+  const closeList = () => {
+    if (inList) {
+      blocks.push("</ul>");
+      inList = false;
+    }
+  };
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      closeList();
+      continue;
+    }
+
+    const heading = trimmed.match(/^(#{1,6})\s+(.+)$/);
+    if (heading) {
+      closeList();
+      const level = Math.min(6, heading[1].length);
+      blocks.push(
+        `<h${level}>${renderInlineMarkdown(heading[2])}</h${level}>`
+      );
+      continue;
+    }
+
+    const listItem = trimmed.match(/^[-*]\s+(.+)$/);
+    if (listItem) {
+      if (!inList) {
+        blocks.push("<ul>");
+        inList = true;
+      }
+      blocks.push(`<li>${renderInlineMarkdown(listItem[1])}</li>`);
+      continue;
+    }
+
+    closeList();
+    blocks.push(`<p>${renderInlineMarkdown(trimmed)}</p>`);
+  }
+
+  closeList();
+  return blocks.join("");
+}
 
 const pulse = (flag: typeof summaryHighlight) => {
   flag.value = false;
@@ -739,6 +869,37 @@ function resetWorkflowState() {
   logsCollapsed.value = false;
 }
 
+function archiveCurrentTurn() {
+  if (!form.topic.trim()) {
+    return;
+  }
+  if (!reportMarkdown.value && !todoTasks.value.length) {
+    return;
+  }
+
+  conversationTurns.value = [
+    {
+      id: Date.now(),
+      topic: form.topic.trim(),
+      reportMarkdown: reportMarkdown.value,
+      completedTasks: completedTasks.value,
+      totalTasks: totalTasks.value,
+      sessionId: currentSessionId.value,
+      timestamp: Date.now()
+    },
+    ...conversationTurns.value
+  ].slice(0, 12);
+}
+
+function restoreTurn(turn: ConversationTurn) {
+  isExpanded.value = true;
+  form.topic = turn.topic;
+  reportMarkdown.value = turn.reportMarkdown;
+  progressLogs.value = [];
+  todoTasks.value = [];
+  activeTaskId.value = null;
+}
+
 function findTask(taskId: unknown): TodoTaskView | undefined {
   const numeric =
     typeof taskId === "number"
@@ -833,8 +994,9 @@ function buildTraceEntry(
   };
 }
 
-const handleSubmit = async () => {
-  if (!form.topic.trim()) {
+const submitResearch = async (rawTopic: string) => {
+  const normalizedTopic = rawTopic.trim();
+  if (!normalizedTopic) {
     error.value = "请输入研究主题";
     return;
   }
@@ -845,15 +1007,19 @@ const handleSubmit = async () => {
   }
 
   loading.value = true;
+  loadingLabel.value = "研究进行中";
   error.value = "";
-  isExpanded.value = true;
+  archiveCurrentTurn();
   resetWorkflowState();
+  isExpanded.value = true;
+  form.topic = normalizedTopic;
 
   const controller = new AbortController();
   currentController = controller;
 
   const payload = {
-    topic: form.topic.trim(),
+    topic: normalizedTopic,
+    session_id: currentSessionId.value || undefined,
     search_api: form.searchApi || undefined
   };
 
@@ -861,12 +1027,38 @@ const handleSubmit = async () => {
     await runResearchStream(
       payload,
       (event: ResearchStreamEvent) => {
+        if (event.type === "session") {
+          const nextSessionId =
+            typeof event.session_id === "string" && event.session_id.trim()
+              ? event.session_id.trim()
+              : null;
+          const nextRunId =
+            typeof event.run_id === "string" && event.run_id.trim()
+              ? event.run_id.trim()
+              : null;
+
+          const sessionChanged =
+            nextSessionId && nextSessionId !== currentSessionId.value;
+
+          currentSessionId.value = nextSessionId;
+          currentRunId.value = nextRunId;
+
+          progressLogs.value.push(
+            sessionChanged
+              ? "已创建新的研究会话"
+              : "已连接到当前研究会话"
+          );
+          loadingLabel.value = "初始化研究流程";
+          return;
+        }
+
         if (event.type === "status") {
           const message =
             typeof event.message === "string" && event.message.trim()
               ? event.message
               : "流程状态更新";
           progressLogs.value.push(message);
+          loadingLabel.value = message;
 
           const payload = event as Record<string, unknown>;
           const task = findTask(payload.task_id);
@@ -1198,6 +1390,7 @@ const handleSubmit = async () => {
           reportMarkdown.value = report || "报告生成失败，未获得有效内容";
           pulse(reportHighlight);
           progressLogs.value.push("最终报告已生成");
+          loadingLabel.value = "最终报告已生成";
           return;
         }
 
@@ -1208,6 +1401,7 @@ const handleSubmit = async () => {
               : "研究过程中发生错误";
           error.value = detail;
           progressLogs.value.push("研究失败，已停止流程");
+          loadingLabel.value = "研究失败";
         }
       },
       { signal: controller.signal }
@@ -1219,15 +1413,31 @@ const handleSubmit = async () => {
   } catch (err) {
     if (err instanceof DOMException && err.name === "AbortError") {
       progressLogs.value.push("已取消当前研究任务");
+      loadingLabel.value = "已取消";
     } else {
       error.value = err instanceof Error ? err.message : "请求失败";
+      loadingLabel.value = "请求失败";
     }
   } finally {
     loading.value = false;
+    loadingLabel.value = "研究流程完成";
     if (currentController === controller) {
       currentController = null;
     }
   }
+};
+
+const handleSubmit = async () => {
+  await submitResearch(form.topic);
+};
+
+const handleFollowUpSubmit = async () => {
+  const nextTopic = composerInput.value.trim();
+  if (!nextTopic) {
+    return;
+  }
+  composerInput.value = "";
+  await submitResearch(nextTopic);
 };
 
 const cancelResearch = () => {
@@ -1250,10 +1460,64 @@ const startNewResearch = () => {
     cancelResearch();
   }
   resetWorkflowState();
+  currentSessionId.value = null;
+  currentRunId.value = null;
+  conversationTurns.value = [];
+  composerInput.value = "";
   isExpanded.value = false;
   form.topic = "";
   form.searchApi = "";
 };
+
+onMounted(() => {
+  try {
+    const savedSessionId = window.localStorage.getItem(SESSION_STORAGE_KEY);
+    if (savedSessionId?.trim()) {
+      currentSessionId.value = savedSessionId.trim();
+    }
+
+    const savedTurns = window.localStorage.getItem(HISTORY_STORAGE_KEY);
+    if (savedTurns) {
+      const parsed = JSON.parse(savedTurns);
+      if (Array.isArray(parsed)) {
+        conversationTurns.value = parsed.filter(
+          (item): item is ConversationTurn =>
+            !!item &&
+            typeof item === "object" &&
+            typeof item.id === "number" &&
+            typeof item.topic === "string" &&
+            typeof item.reportMarkdown === "string"
+        );
+      }
+    }
+  } catch (error) {
+    console.warn("恢复会话状态失败", error);
+  }
+});
+
+watch(currentSessionId, (value) => {
+  try {
+    if (value) {
+      window.localStorage.setItem(SESSION_STORAGE_KEY, value);
+    } else {
+      window.localStorage.removeItem(SESSION_STORAGE_KEY);
+    }
+  } catch (error) {
+    console.warn("保存会话标识失败", error);
+  }
+});
+
+watch(
+  conversationTurns,
+  (value) => {
+    try {
+      window.localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(value));
+    } catch (error) {
+      console.warn("保存会话历史失败", error);
+    }
+  },
+  { deep: true }
+);
 
 onBeforeUnmount(() => {
   if (currentController) {
@@ -2621,6 +2885,140 @@ select:focus {
 
 .new-research-btn:active {
   transform: translateY(0);
+}
+
+.history-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.history-panel > label {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #64748b;
+}
+
+.history-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.history-item {
+  margin: 0;
+}
+
+.history-button {
+  width: 100%;
+  text-align: left;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  background: rgba(248, 250, 252, 0.9);
+  border-radius: 12px;
+  padding: 10px 12px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.history-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #1f2937;
+}
+
+.history-meta {
+  font-size: 12px;
+  color: #64748b;
+}
+
+.chat-composer {
+  position: sticky;
+  bottom: 0;
+  margin-top: auto;
+  padding: 16px;
+  border-top: 1px solid rgba(148, 163, 184, 0.18);
+  background: linear-gradient(180deg, rgba(255,255,255,0.92), rgba(255,255,255,0.98));
+  backdrop-filter: blur(10px);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.chat-input {
+  width: 100%;
+  resize: vertical;
+  min-height: 88px;
+  padding: 14px 16px;
+  border-radius: 14px;
+  border: 1px solid rgba(148, 163, 184, 0.3);
+  background: #ffffff;
+  color: #111827;
+  font: inherit;
+  line-height: 1.6;
+}
+
+.chat-input:focus {
+  outline: none;
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.12);
+}
+
+.chat-actions {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.block-markdown {
+  font-size: 14px;
+  line-height: 1.8;
+  color: #1f2937;
+  background: rgba(248, 250, 252, 0.9);
+  padding: 16px;
+  border-radius: 14px;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  overflow: auto;
+  max-height: 520px;
+}
+
+.block-markdown h1,
+.block-markdown h2,
+.block-markdown h3,
+.block-markdown h4,
+.block-markdown h5,
+.block-markdown h6 {
+  margin: 0 0 12px;
+  color: #0f172a;
+  line-height: 1.4;
+}
+
+.block-markdown p {
+  margin: 0 0 12px;
+}
+
+.block-markdown ul {
+  margin: 0 0 12px 20px;
+  padding: 0;
+}
+
+.block-markdown li {
+  margin-bottom: 8px;
+}
+
+.block-markdown code {
+  font-family: "JetBrains Mono", "Fira Code", ui-monospace, SFMono-Regular,
+    Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 12px;
+  padding: 2px 6px;
+  border-radius: 8px;
+  background: rgba(226, 232, 240, 0.9);
 }
 
 /* 全屏状态下的结果面板 */

@@ -143,3 +143,36 @@ report_writer_instructions = """
 - 如需在报告层面沉淀结果，可创建新的 `conclusion` 类型笔记，例如：`[TOOL_CALL:note:{"action":"create","title":"研究报告：{研究主题}","note_type":"conclusion","tags":["deep_research","report"],"content":"...报告要点..."}]`。
 </NOTES>
 """
+
+
+semantic_fact_extraction_instructions = """
+你是一名研究知识提炼助手，请从给定研究报告中提炼 3 到 8 条长期可复用的稳定事实。
+
+<GOAL>
+1. 只保留对未来研究规划、总结或报告仍有价值的稳定结论；
+2. 不要记录任务过程、轮次、临时状态、偶然现象或纯操作信息；
+3. 尽量提炼方法层、工程层、应用层、趋势层的结论；
+4. 每条事实应简洁、清晰、低歧义。
+</GOAL>
+
+<OUTPUT>
+你必须只输出一个 JSON 对象，格式如下：
+{
+  "facts": [
+    {
+      "scope": "method|engineering|application|trend|evaluation",
+      "subject": "事实主体，简短概括",
+      "fact": "稳定事实本身",
+      "confidence": 0.0
+    }
+  ]
+}
+</OUTPUT>
+
+<RULES>
+- `facts` 最多 8 条，最少 0 条；
+- `confidence` 取 0.0 到 1.0 之间的小数；
+- 不要输出 Markdown，不要解释，不要前言后记；
+- 如果报告中没有足够稳定的可复用事实，输出 {"facts": []}。
+</RULES>
+"""

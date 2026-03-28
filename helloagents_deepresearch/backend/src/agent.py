@@ -167,12 +167,17 @@ class DeepResearchAgent:
             for _ in self._execute_task(state, task, emit_stream=False):
                 pass
         #一个完整的Markdown报告字符串
+        yield {
+            "type": "status",
+            "message": "任务执行完成，正在生成最终报告",
+        }
         report = self.reporting.generate_report(state)
         self._drain_tool_events(state)
         state.structured_report = report
         state.running_summary = report
         self._persist_final_report(state, report)
         self.memory_service.save_report_memory(state.run_id, state, report)
+        self.memory_service.consolidate_semantic_facts(state.run_id, topic, report)
         return SummaryStateOutput(
             session_id=state.session_id,
             running_summary=report,
@@ -321,6 +326,11 @@ class DeepResearchAgent:
 
         note_event = self._persist_final_report(state, report)
         self.memory_service.save_report_memory(state.run_id, state, report)
+        yield {
+            "type": "status",
+            "message": "最终报告已生成，正在沉淀语义记忆",
+        }
+        self.memory_service.consolidate_semantic_facts(state.run_id, topic, report)
         if note_event:
             yield note_event
 
@@ -345,16 +355,21 @@ class DeepResearchAgent:
     ) -> Iterator[dict[str, Any]]:
         """Run search + summarization for a single task."""
         task.status = "in_progress"
+        initial_backend = (
+            LOCAL_LIBRARY_BACKEND
+            if self._looks_like_local_research_query(task.query)
+            else self._resolve_web_backend()
+        )
         local_result: dict[str, Any] | None = None
         local_notices: list[str] = []
         local_answer: str | None = None
-        local_backend = LOCAL_LIBRARY_BACKEND
+        local_backend = initial_backend
         task.latest_query = task.query
 
         #把过程中的状态/结果事件往外推送，用于后续展示。
         for event in self._emit_search_stage(
             task,
-            backend=LOCAL_LIBRARY_BACKEND,
+            backend=initial_backend,
             query=task.query,
             emit_stream=emit_stream,
             step=step,
@@ -365,7 +380,7 @@ class DeepResearchAgent:
             task.query,
             self.config,
             state.research_loop_count,
-            backend_override=LOCAL_LIBRARY_BACKEND,
+            backend_override=initial_backend,
         )
         task.attempt_count += 1
         task.search_backend = local_backend
