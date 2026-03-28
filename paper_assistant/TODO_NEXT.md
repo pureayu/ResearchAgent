@@ -23,14 +23,19 @@
 
 ## 当前主线
 
-- [ ] 拆分 `working_memory.py`
-  - [ ] 新建 `app/memory/working_memory.py`
-  - [ ] 将 `append_turn / get_recent_turns / has_history / format_history / clear_session` 从 `manager.py` 移入 `WorkingMemory`
-  - [ ] 将 `manager.py` 收敛为薄封装，作为后续 `working + research` 的统一入口
+- [x] 拆分 `working_memory.py`
+  - [x] 新建 `app/memory/working_memory.py`
+  - [x] 将 `append_turn / get_recent_turns / has_history / format_history / clear_session` 从 `manager.py` 移入 `WorkingMemory`
+  - [x] 将 `manager.py` 收敛为薄封装，作为后续 `working + research` 的统一入口
 - [ ] 验证拆分后 CLI 行为不变
   - [ ] 同一 `session_id` 下追问补全仍可用
   - [ ] `resolved_question` 仍参与检索
   - [ ] 回答后写回 session JSON 仍正常
+- [ ] 开始开发 `research_memory.py`
+  - [ ] 定义最小 `ResearchNote` 数据结构
+  - [ ] 设计 research memory 的存储格式
+  - [ ] 明确 `append_note / list_notes / format_notes / clear_notes` 四个最小接口
+  - [ ] 将 `MemoryManager` 扩展为 `working + research` 双入口
 
 ## 下一阶段增强
 
@@ -38,6 +43,9 @@
   - [ ] 新增 `search_relevant_turns(session_id, query, limit)`
   - [ ] 第一版优先采用轻量打分（关键词 / TF-IDF），不引入新的 embedding 依赖
   - [ ] 在 `build_context` 中组合“最近几轮 + 相关历史”
+- [ ] 为 working memory 增加“重要轮次优先”能力
+  - [ ] 区分普通 turn 与高价值 turn
+  - [ ] 为后续 summary / consolidate 做准备
 - [ ] 序号型指代解析
   - [ ] 利用上一轮 `citation_titles` 做“第一篇 / 第二篇论文”映射
 - [ ] 抽象型指代解析
@@ -45,15 +53,21 @@
 
 ## 后续工作
 
-- [ ] 引入 `research_memory.py`
+- [ ] 完整引入 `research_memory.py`
   - [ ] 沉淀高价值研究结论，而不是只保存 turn history
-  - [ ] 设计最小 `ResearchNote` 结构
+  - [ ] 将 research memory 接到真实问答闭环中
 - [ ] 做 working / research memory 的 consolidate 规则
   - [ ] working memory 保持短期、受限
   - [ ] 高价值结论进入 research memory
 - [ ] 统一 CLI 与 Web 的 session / memory 语义
   - [ ] Web 请求透传 `session_id`
   - [ ] 后端入口复用同一套 memory manager
+- [ ] 将网页端从“单次研究任务”升级为“多轮研究对话”
+  - [ ] 前端引入稳定的 `session_id`
+  - [ ] 同一会话内连续提问不重置上下文
+  - [ ] 后端 research 接口接收并透传 `session_id`
+  - [ ] 当前研究报告与后续追问共享同一 memory
+  - [ ] 明确“开始新对话 / 继续当前对话”的页面交互语义
 
 ## chapter14 并行项
 
