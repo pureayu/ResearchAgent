@@ -30,8 +30,8 @@ def _get_local_library_search_tool():
     if _LOCAL_LIBRARY_SEARCH_TOOL is not None:
         return _LOCAL_LIBRARY_SEARCH_TOOL
 
-    hello_agents_root = Path(__file__).resolve().parents[6]
-    paper_assistant_root = hello_agents_root.parent / "paper_assistant"
+    repo_root = Path(__file__).resolve().parents[4]
+    paper_assistant_root = repo_root / "paper_assistant"
     if str(paper_assistant_root) not in sys.path:
         sys.path.insert(0, str(paper_assistant_root))
 
@@ -103,7 +103,8 @@ def dispatch_search(
     except Exception as exc:  # pragma: no cover - defensive logging
         logger.exception("Search backend %s failed: %s", search_api, exc)
         raise
-
+    
+    #如果传入的是字符串则结构化成字典
     if isinstance(raw_response, str):
         notices = [raw_response]
         logger.warning("Search backend %s returned text notice: %s", search_api, raw_response)

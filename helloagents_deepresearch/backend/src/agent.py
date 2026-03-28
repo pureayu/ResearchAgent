@@ -146,10 +146,15 @@ class DeepResearchAgent:
         self._tool_event_sink_enabled = sink is not None
         self._tool_tracker.set_event_sink(sink)
 
-    def run(self, topic: str) -> SummaryStateOutput:
+    #一次研究
+    def run(self, topic: str, session_id: str | None = None) -> SummaryStateOutput:
         """Execute the research workflow and return the final report."""
         state = SummaryState(research_topic=topic)
-        state.run_id = self.memory_service.start_run(topic)
+        state.session_id = self.memory_service.get_or_create_session(session_id, topic)
+        state.recalled_context = self.memory_service.load_relevant_context(
+            state.session_id, topic
+        )
+        state.run_id = self.memory_service.start_run(state.session_id, topic)
         #分解任务
         state.todo_items = self.planner.plan_todo_list(state)
         self._drain_tool_events(state)
@@ -169,15 +174,25 @@ class DeepResearchAgent:
         self._persist_final_report(state, report)
         self.memory_service.save_report_memory(state.run_id, state, report)
         return SummaryStateOutput(
+            session_id=state.session_id,
             running_summary=report,
             report_markdown=report,
             todo_items=state.todo_items,
         )
 
-    def run_stream(self, topic: str) -> Iterator[dict[str, Any]]:
+    def run_stream(self, topic: str, session_id: str | None = None) -> Iterator[dict[str, Any]]:
         """Execute the workflow yielding incremental progress events."""
         state = SummaryState(research_topic=topic)
-        state.run_id = self.memory_service.start_run(topic)
+        state.session_id = self.memory_service.get_or_create_session(session_id, topic)
+        state.recalled_context = self.memory_service.load_relevant_context(
+            state.session_id, topic
+        )
+        state.run_id = self.memory_service.start_run(state.session_id, topic)
+        yield {
+            "type": "session",
+            "session_id": state.session_id,
+            "run_id": state.run_id,
+        }
         logger.debug("Starting streaming research: topic=%s", topic)
         yield {"type": "status", "message": "初始化研究流程"}
 

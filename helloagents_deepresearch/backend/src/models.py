@@ -33,6 +33,8 @@ class TodoItem:
 
 @dataclass(kw_only=True)
 class SummaryState:
+    recalled_context: dict | None = field(default=None)
+    session_id : Optional[str] = field(default=None)
     #记录每轮的id号， 一次完整研究流程的编号
     run_id: Optional[str] = field(default=None)
     research_topic: str = field(default=None)  # Report topic
@@ -54,6 +56,7 @@ class SummaryStateInput:
 
 @dataclass(kw_only=True)
 class SummaryStateOutput:
+    session_id: Optional[str] = field(default=None)
     running_summary: str = field(default=None)  # Backward-compatible文本
     report_markdown: Optional[str] = field(default=None)
     todo_items: List[TodoItem] = field(default_factory=list)

@@ -35,7 +35,7 @@ logger.add(
 
 class ResearchRequest(BaseModel):
     """Payload for triggering a research run."""
-
+    session_id: str | None = None
     topic: str = Field(..., description="Research topic supplied by the user")
     search_api: SearchAPI | None = Field(
         default=None,
@@ -45,7 +45,7 @@ class ResearchRequest(BaseModel):
 
 class ResearchResponse(BaseModel):
     """HTTP response containing the generated report and structured tasks."""
-
+    session_id: str
     report_markdown: str = Field(
         ..., description="Markdown-formatted research report including sections"
     )
@@ -120,7 +120,7 @@ def create_app() -> FastAPI:
         try:
             config = _build_config(payload)
             agent = DeepResearchAgent(config=config)
-            result = agent.run(payload.topic)
+            result = agent.run(payload.topic, session_id = payload.session_id)
         except ValueError as exc:  # Likely due to unsupported configuration
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except Exception as exc:  # pragma: no cover - defensive guardrail
@@ -142,6 +142,7 @@ def create_app() -> FastAPI:
         ]
 
         return ResearchResponse(
+            session_id=result.session_id,
             report_markdown=(result.report_markdown or result.running_summary or ""),
             todo_items=todo_payload,
         )
@@ -156,7 +157,7 @@ def create_app() -> FastAPI:
 
         def event_iterator() -> Iterator[str]:
             try:
-                for event in agent.run_stream(payload.topic):
+                for event in agent.run_stream(payload.topic, session_id = payload.session_id):
                     yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
             except Exception as exc:  # pragma: no cover - defensive guardrail
                 logger.exception("Streaming research failed")

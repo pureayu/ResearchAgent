@@ -47,8 +47,20 @@ class MemoryService:
         with self._connect() as connection:
             connection.execute(
                 """
+                CREATE TABLE IF NOT EXISTS research_sessions (
+                    session_id TEXT PRIMARY KEY,
+                    topic TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    last_run_id TEXT
+                )
+                """
+            )
+            connection.execute(
+                """
                 CREATE TABLE IF NOT EXISTS research_runs (
                     run_id TEXT PRIMARY KEY,
+                    session_id TEXT NOT NULL,
                     topic TEXT NOT NULL,
                     started_at TEXT NOT NULL,
                     finished_at TEXT,
@@ -58,6 +70,14 @@ class MemoryService:
                 )
                 """
             )
+            existing_run_columns = {
+                row["name"]
+                for row in connection.execute("PRAGMA table_info(research_runs)")
+            }
+            if "session_id" not in existing_run_columns:
+                connection.execute(
+                    "ALTER TABLE research_runs ADD COLUMN session_id TEXT"
+                )
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS task_memories (
@@ -82,7 +102,7 @@ class MemoryService:
             )
             connection.commit()
 
-    def start_run(self, topic: str) -> str:
+    def start_run(self, session_id: str, topic: str) -> str:
         """Create a structured run record and return its run_id."""
 
         run_id = uuid4().hex
@@ -93,11 +113,21 @@ class MemoryService:
                 """
                 INSERT INTO research_runs (
                     run_id,
+                    session_id,
                     topic,
                     started_at
-                ) VALUES (?, ?, ?)
+                ) VALUES (?, ?, ?, ?)
                 """,
-                (run_id, topic, started_at),
+                (run_id, session_id, topic, started_at),
+            )
+            connection.execute(
+                """
+                UPDATE research_sessions
+                SET updated_at = ?,
+                    last_run_id = ?
+                WHERE session_id = ?
+                """,
+                (started_at, run_id, session_id),
             )
             connection.commit()
 
@@ -175,7 +205,49 @@ class MemoryService:
             )
             connection.commit()
 
-    def load_relevant_context(self, topic: str) -> dict[str, Any]:
+    def get_or_create_session(self, session_id: str | None, topic: str) -> str:
+        """Return an existing session_id or create a new research session."""
+
+        now = datetime.now(timezone.utc).isoformat()
+        resolved_session_id = session_id or uuid4().hex
+
+        with self._connect() as connection:
+            existing = connection.execute(
+                """
+                SELECT session_id
+                FROM research_sessions
+                WHERE session_id = ?
+                """,
+                (resolved_session_id,),
+            ).fetchone()
+
+            if existing:
+                connection.execute(
+                    """
+                    UPDATE research_sessions
+                    SET updated_at = ?
+                    WHERE session_id = ?
+                    """,
+                    (now, resolved_session_id),
+                )
+            else:
+                connection.execute(
+                    """
+                    INSERT INTO research_sessions (
+                        session_id,
+                        topic,
+                        created_at,
+                        updated_at
+                    ) VALUES (?, ?, ?, ?)
+                    """,
+                    (resolved_session_id, topic, now, now),
+                )
+            connection.commit()
+
+        return resolved_session_id
+
+
+    def load_relevant_context(self, session_id: str | None, topic: str) -> dict[str, Any]:
         """Load recalled memory context for a new topic.
 
         Intended future shape:
@@ -183,10 +255,75 @@ class MemoryService:
         - related_tasks
         - semantic_facts
         """
+        session_runs: list[dict[str, Any]] = []
+        recent_tasks: list[dict[str, Any]] = []
 
-        raise NotImplementedError(
-            "Recall is deferred: load_relevant_context is not implemented yet."
-        )
+        if not session_id:
+            return {
+                "session_runs": [],
+                "recent_tasks": [],
+                "semantic_facts": [],
+            }
+
+        with self._connect() as connection:
+            run_rows = connection.execute(
+                """
+                SELECT run_id, session_id, topic, started_at, finished_at, final_report, task_count
+                FROM research_runs
+                WHERE session_id = ?
+                ORDER BY started_at DESC
+                LIMIT 3
+                """,
+                (session_id,),
+            ).fetchall()
+
+            for row in run_rows:
+                final_report = row["final_report"] or ""
+                session_runs.append(
+                    {
+                        "run_id": row["run_id"],
+                        "session_id": row["session_id"],
+                        "topic": row["topic"],
+                        "started_at": row["started_at"],
+                        "finished_at": row["finished_at"],
+                        "task_count": row["task_count"],
+                        "report_excerpt": final_report[:600],
+                    }
+                )
+
+            run_ids = [row["run_id"] for row in run_rows]
+            if run_ids:
+                placeholders = ", ".join("?" for _ in run_ids)
+                task_rows = connection.execute(
+                    f"""
+                    SELECT run_id, task_id, title, status, summary, created_at
+                    FROM task_memories
+                    WHERE run_id IN ({placeholders})
+                    ORDER BY created_at DESC
+                    LIMIT 8
+                    """,
+                    run_ids,
+                ).fetchall()
+            else:
+                task_rows = []
+
+            for row in task_rows:
+                recent_tasks.append(
+                    {
+                        "run_id": row["run_id"],
+                        "task_id": row["task_id"],
+                        "title": row["title"],
+                        "status": row["status"],
+                        "summary": row["summary"],
+                        "created_at": row["created_at"],
+                    }
+                )
+
+        return {
+            "session_runs": session_runs,
+            "recent_tasks": recent_tasks,
+            "semantic_facts": [],
+        }
 
     def consolidate_semantic_facts(
         self,

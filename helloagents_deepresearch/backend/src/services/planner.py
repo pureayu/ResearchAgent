@@ -29,6 +29,7 @@ class PlanningService:
         prompt = todo_planner_instructions.format(
             current_date=get_current_date(),
             research_topic=state.research_topic,
+            recalled_context = state.recalled_context,
         )
 
         response = self._agent.run(prompt)

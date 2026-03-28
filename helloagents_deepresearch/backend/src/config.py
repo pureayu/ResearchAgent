@@ -115,7 +115,7 @@ class Configuration(BaseModel):
             "local_llm": os.getenv("LOCAL_LLM"),
             "llm_provider": os.getenv("LLM_PROVIDER"),
             "llm_api_key": os.getenv("LLM_API_KEY"),
-            "llm_model_id": os.getenv("LLM_MODEL_ID"),
+            "llm_model_id": os.getenv("LLM_MODEL_ID") or os.getenv("LLM_MODEL"),
             "llm_base_url": os.getenv("LLM_BASE_URL"),
             "lmstudio_base_url": os.getenv("LMSTUDIO_BASE_URL"),
             "ollama_base_url": os.getenv("OLLAMA_BASE_URL"),
@@ -138,6 +138,12 @@ class Configuration(BaseModel):
             for key, value in overrides.items():
                 if value is not None:
                     raw_values[key] = value
+
+        # Reuse paper_assistant-style OpenAI-compatible settings by default.
+        # If a custom base URL is provided but no explicit provider is set,
+        # avoid falling back to the local Ollama path.
+        if raw_values.get("llm_base_url") and "llm_provider" not in raw_values:
+            raw_values["llm_provider"] = "custom"
 
         return cls(**raw_values)
 
