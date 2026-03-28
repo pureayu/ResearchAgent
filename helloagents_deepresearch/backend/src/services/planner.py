@@ -26,10 +26,11 @@ class PlanningService:
     def plan_todo_list(self, state: SummaryState) -> List[TodoItem]:
         """Ask the planner agent to break the topic into actionable tasks."""
 
+        recalled_context_text = self._format_recalled_context(state.recalled_context)
         prompt = todo_planner_instructions.format(
             current_date=get_current_date(),
             research_topic=state.research_topic,
-            recalled_context = state.recalled_context,
+            recalled_context=recalled_context_text,
         )
 
         response = self._agent.run(prompt)
@@ -62,6 +63,57 @@ class PlanningService:
         titles = [task.title for task in todo_items]
         logger.info("Planner produced %d tasks: %s", len(todo_items), titles)
         return todo_items
+
+    def _format_recalled_context(self, recalled_context: dict[str, Any] | None) -> str:
+        """Convert structured recalled memory into stable planner-facing text."""
+
+        if not recalled_context:
+            return "无"
+
+        session_runs = recalled_context.get("session_runs") or []
+        recent_tasks = recalled_context.get("recent_tasks") or []
+        semantic_facts = recalled_context.get("semantic_facts") or []
+
+        sections: list[str] = []
+
+        if session_runs:
+            lines = ["最近研究轮次："]
+            for idx, run in enumerate(session_runs[:3], start=1):
+                topic = str(run.get("topic") or "未知主题").strip()
+                finished_at = str(run.get("finished_at") or "未完成").strip()
+                task_count = run.get("task_count")
+                excerpt = str(run.get("report_excerpt") or "").strip()
+                excerpt = excerpt[:180] + ("..." if len(excerpt) > 180 else "")
+                lines.append(
+                    f"{idx}. 主题：{topic}；完成时间：{finished_at}；任务数：{task_count}"
+                )
+                if excerpt:
+                    lines.append(f"   报告摘要：{excerpt}")
+            sections.append("\n".join(lines))
+
+        if recent_tasks:
+            lines = ["最近任务摘要："]
+            for idx, task in enumerate(recent_tasks[:5], start=1):
+                title = str(task.get("title") or "未知任务").strip()
+                status = str(task.get("status") or "unknown").strip()
+                summary = str(task.get("summary") or "").strip()
+                summary = summary[:160] + ("..." if len(summary) > 160 else "")
+                lines.append(f"{idx}. {title} [{status}]")
+                if summary:
+                    lines.append(f"   摘要：{summary}")
+            sections.append("\n".join(lines))
+
+        if semantic_facts:
+            lines = ["已沉淀事实："]
+            for idx, fact in enumerate(semantic_facts[:5], start=1):
+                fact_text = str(fact.get("fact") or "").strip()
+                if not fact_text:
+                    continue
+                lines.append(f"{idx}. {fact_text}")
+            if len(lines) > 1:
+                sections.append("\n".join(lines))
+
+        return "\n\n".join(sections) if sections else "无"
 
     @staticmethod
     def create_fallback_task(state: SummaryState) -> TodoItem:
