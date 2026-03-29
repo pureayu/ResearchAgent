@@ -5,8 +5,7 @@ from __future__ import annotations
 import logging
 import re
 from pathlib import Path
-from queue import Empty, Queue
-from threading import Lock, Thread
+from threading import Lock
 from typing import Any, Callable, Iterator
 
 from hello_agents import HelloAgentsLLM, ToolAwareSimpleAgent
@@ -15,6 +14,7 @@ from hello_agents.tools.builtin.note_tool import NoteTool
 
 from config import Configuration
 from prompts import (
+    research_reviewer_system_prompt,
     report_writer_instructions,
     task_summarizer_instructions,
     todo_planner_system_prompt,
@@ -26,6 +26,7 @@ from services.search import dispatch_search, prepare_research_context
 from services.summarizer import SummarizationService
 from services.tool_events import ToolCallTracker
 from services.memory import MemoryService
+from services.reviewer import ReviewerService
 
 logger = logging.getLogger(__name__)
 LOCAL_LIBRARY_BACKEND = "local_library"
@@ -49,6 +50,39 @@ LOCAL_QUERY_HINTS = {
     "引用",
     "生成",
     "知识库",
+}
+MEMORY_RECALL_PATTERNS = (
+    r"还记得.*(之前|上次|以前)",
+    r"(之前|上次|以前).*(问过|聊过|提过|说过)",
+    r"(有没有|是否).*(问过|聊过|提过|说过)",
+    r"记不记得",
+)
+MEMORY_TERM_EXPANSIONS = {
+    "药品": {"药物", "用药", "服药", "剂量", "副作用", "禁忌", "褪黑素"},
+    "药物": {"药品", "用药", "服药", "剂量", "副作用", "禁忌", "褪黑素"},
+    "失眠": {"褪黑素", "睡眠", "安眠药"},
+    "牙齿": {"智齿", "口腔", "冠周炎", "拔牙"},
+    "牙": {"智齿", "口腔", "冠周炎", "拔牙"},
+}
+MEMORY_QUERY_STOPWORDS = {
+    "还记得",
+    "记得",
+    "记不记得",
+    "之前",
+    "上次",
+    "以前",
+    "是否",
+    "有没有",
+    "关于",
+    "事情",
+    "情况",
+    "问过",
+    "聊过",
+    "提过",
+    "说过",
+    "这个",
+    "那个",
+    "内容",
 }
 
 
@@ -86,6 +120,10 @@ class DeepResearchAgent:
             name="报告撰写专家",
             system_prompt=report_writer_instructions.strip(),
         )
+        self.review_agent = self._create_tool_aware_agent(
+            name="研究评审专家",
+            system_prompt=research_reviewer_system_prompt.strip(),
+        )
 
         self._summarizer_factory: Callable[[], ToolAwareSimpleAgent] = lambda: self._create_tool_aware_agent(  # noqa: E501
             name="任务总结专家",
@@ -95,6 +133,7 @@ class DeepResearchAgent:
         self.planner = PlanningService(self.todo_agent, self.config)
         self.summarizer = SummarizationService(self._summarizer_factory, self.config)
         self.reporting = ReportingService(self.report_agent, self.config)
+        self.reviewer = ReviewerService(self.review_agent, self.config)
         self._last_search_notices: list[str] = []
 
     # ------------------------------------------------------------------
@@ -151,26 +190,59 @@ class DeepResearchAgent:
         """Execute the research workflow and return the final report."""
         state = SummaryState(research_topic=topic)
         state.session_id = self.memory_service.get_or_create_session(session_id, topic)
-        state.recalled_context = self.memory_service.load_relevant_context(
-            state.session_id, topic
-        )
         state.run_id = self.memory_service.start_run(state.session_id, topic)
-        #分解任务
-        state.todo_items = self.planner.plan_todo_list(state)
-        self._drain_tool_events(state)
+        self.memory_service.capture_profile_memory(state.run_id, state.session_id, topic)
+        state.recalled_context = self.memory_service.load_relevant_context(
+            state.session_id,
+            topic,
+            exclude_run_id=state.run_id,
+        )
+        memory_only_mode = self._looks_like_memory_recall_query(topic) and self._has_recallable_history(
+            state.recalled_context
+        )
 
-        if not state.todo_items:
-            logger.info("No TODO items generated; falling back to single task")
-            state.todo_items = [self.planner.create_fallback_task(state)]
+        if memory_only_mode:
+            state.todo_items = [self._build_memory_recall_task(state)]
+            self._initialize_round_metadata(state.todo_items, round_id=1, origin="memory")
+        else:
+            #分解任务
+            state.todo_items = self.planner.plan_todo_list(state)
+            self._drain_tool_events(state)
 
-        for task in state.todo_items:
-            for _ in self._execute_task(state, task, emit_stream=False):
-                pass
-        #一个完整的Markdown报告字符串
-        yield {
-            "type": "status",
-            "message": "任务执行完成，正在生成最终报告",
-        }
+            if not state.todo_items:
+                logger.info("No TODO items generated; falling back to single task")
+                state.todo_items = [self.planner.create_fallback_task(state)]
+            self._initialize_round_metadata(state.todo_items, round_id=1, origin="planner")
+
+        max_rounds = 1 if memory_only_mode else max(1, int(self.config.max_research_rounds))
+        current_round = 1
+
+        while current_round <= max_rounds:
+            pending_tasks = self._pending_tasks_for_round(state, current_round)
+            if not pending_tasks:
+                break
+
+            for task in pending_tasks:
+                for _ in self._execute_task(state, task, emit_stream=False):
+                    pass
+
+            if current_round >= max_rounds:
+                break
+
+            review = self.reviewer.review_progress(state, current_round)
+            if review.is_sufficient or not review.followup_tasks:
+                break
+
+            appended_tasks = self._append_followup_tasks(
+                state,
+                review.followup_tasks,
+                round_id=current_round + 1,
+            )
+            if not appended_tasks:
+                break
+
+            current_round += 1
+
         report = self.reporting.generate_report(state)
         self._drain_tool_events(state)
         state.structured_report = report
@@ -189,29 +261,39 @@ class DeepResearchAgent:
         """Execute the workflow yielding incremental progress events."""
         state = SummaryState(research_topic=topic)
         state.session_id = self.memory_service.get_or_create_session(session_id, topic)
-        state.recalled_context = self.memory_service.load_relevant_context(
-            state.session_id, topic
-        )
         state.run_id = self.memory_service.start_run(state.session_id, topic)
+        self.memory_service.capture_profile_memory(state.run_id, state.session_id, topic)
+        state.recalled_context = self.memory_service.load_relevant_context(
+            state.session_id,
+            topic,
+            exclude_run_id=state.run_id,
+        )
+        memory_only_mode = self._looks_like_memory_recall_query(topic) and self._has_recallable_history(
+            state.recalled_context
+        )
         yield {
             "type": "session",
             "session_id": state.session_id,
             "run_id": state.run_id,
         }
         logger.debug("Starting streaming research: topic=%s", topic)
-        yield {"type": "status", "message": "初始化研究流程"}
+        yield {
+            "type": "status",
+            "message": "检测到历史回忆型问题，优先检索会话记忆"
+            if memory_only_mode
+            else "初始化研究流程",
+        }
 
-        state.todo_items = self.planner.plan_todo_list(state)
-        for event in self._drain_tool_events(state, step=0):
-            yield event
-        if not state.todo_items:
-            state.todo_items = [self.planner.create_fallback_task(state)]
-
-        channel_map: dict[int, dict[str, Any]] = {}
-        for index, task in enumerate(state.todo_items, start=1):
-            token = f"task_{task.id}"
-            task.stream_token = token
-            channel_map[task.id] = {"step": index, "token": token}
+        if memory_only_mode:
+            state.todo_items = [self._build_memory_recall_task(state)]
+            self._initialize_round_metadata(state.todo_items, round_id=1, origin="memory")
+        else:
+            state.todo_items = self.planner.plan_todo_list(state)
+            for event in self._drain_tool_events(state, step=0):
+                yield event
+            if not state.todo_items:
+                state.todo_items = [self.planner.create_fallback_task(state)]
+            self._initialize_round_metadata(state.todo_items, round_id=1, origin="planner")
 
         yield {
             "type": "todo_list",
@@ -219,61 +301,57 @@ class DeepResearchAgent:
             "step": 0,
         }
 
-        event_queue: Queue[dict[str, Any]] = Queue()
+        max_rounds = 1 if memory_only_mode else max(1, int(self.config.max_research_rounds))
+        current_round = 1
+        step_counter = 1
 
-        def enqueue(
-            event: dict[str, Any],
-            *,
-            task: TodoItem | None = None,
-            step_override: int | None = None,
-        ) -> None:
-            payload = dict(event)
-            target_task_id = payload.get("task_id")
-            if task is not None:
-                target_task_id = task.id
-                payload["task_id"] = task.id
+        while current_round <= max_rounds:
+            pending_tasks = self._pending_tasks_for_round(state, current_round)
+            if not pending_tasks:
+                break
 
-            channel = channel_map.get(target_task_id) if target_task_id is not None else None
-            if channel:
-                payload.setdefault("step", channel["step"])
-                payload["stream_token"] = channel["token"]
-            if step_override is not None:
-                payload["step"] = step_override
-            event_queue.put(payload)
+            yield {
+                "type": "status",
+                "message": f"开始第 {current_round} 轮研究",
+            }
 
-        def tool_event_sink(event: dict[str, Any]) -> None:
-            enqueue(event)
+            for task in pending_tasks:
+                step = step_counter
+                step_counter += 1
+                task.stream_token = f"task_{task.id}"
 
-        self._set_tool_event_sink(tool_event_sink)
+                yield {
+                    "type": "task_status",
+                    "task_id": task.id,
+                    "status": "in_progress",
+                    "title": task.title,
+                    "intent": task.intent,
+                    "note_id": task.note_id,
+                    "note_path": task.note_path,
+                    "attempt_count": task.attempt_count,
+                    "search_backend": task.search_backend,
+                    "evidence_count": task.evidence_count,
+                    "top_score": task.top_score,
+                    "needs_followup": task.needs_followup,
+                    "step": step,
+                    "stream_token": task.stream_token,
+                    "round_id": task.round_id,
+                    "origin": task.origin,
+                    "parent_task_id": task.parent_task_id,
+                }
 
-        threads: list[Thread] = []
-
-        def worker(task: TodoItem, step: int) -> None:
-            try:
-                enqueue(
-                    {
-                        "type": "task_status",
-                        "task_id": task.id,
-                        "status": "in_progress",
-                        "title": task.title,
-                        "intent": task.intent,
-                        "note_id": task.note_id,
-                        "note_path": task.note_path,
-                        "attempt_count": task.attempt_count,
-                        "search_backend": task.search_backend,
-                        "evidence_count": task.evidence_count,
-                        "top_score": task.top_score,
-                        "needs_followup": task.needs_followup,
-                    },
-                    task=task,
-                )
-
-                for event in self._execute_task(state, task, emit_stream=True, step=step):
-                    enqueue(event, task=task)
-            except Exception as exc:  # pragma: no cover - defensive guardrail
-                logger.exception("Task execution failed", exc_info=exc)
-                enqueue(
-                    {
+                try:
+                    for event in self._execute_task(state, task, emit_stream=True, step=step):
+                        payload = dict(event)
+                        if payload.get("task_id") == task.id:
+                            payload.setdefault("step", step)
+                            payload["stream_token"] = task.stream_token
+                        yield payload
+                except Exception as exc:  # pragma: no cover - defensive guardrail
+                    logger.exception("Task execution failed", exc_info=exc)
+                    task.status = "failed"
+                    self.memory_service.save_task_memory(state.run_id, task)
+                    yield {
                         "type": "task_status",
                         "task_id": task.id,
                         "status": "failed",
@@ -282,43 +360,54 @@ class DeepResearchAgent:
                         "intent": task.intent,
                         "note_id": task.note_id,
                         "note_path": task.note_path,
-                    },
-                    task=task,
-                )
-            finally:
-                enqueue({"type": "__task_done__", "task_id": task.id})
+                        "step": step,
+                        "stream_token": task.stream_token,
+                    }
 
-        for task in state.todo_items:
-            step = channel_map.get(task.id, {}).get("step", 0)
-            thread = Thread(target=worker, args=(task, step), daemon=True)
-            threads.append(thread)
-            thread.start()
+            if current_round >= max_rounds:
+                break
 
-        active_workers = len(state.todo_items)
-        finished_workers = 0
+            yield {
+                "type": "status",
+                "message": f"第 {current_round} 轮任务完成，正在评估研究覆盖度",
+            }
+            review = self.reviewer.review_progress(state, current_round)
+            if review.is_sufficient or not review.followup_tasks:
+                yield {
+                    "type": "status",
+                    "message": "当前研究已覆盖核心问题，准备生成最终报告",
+                }
+                break
 
-        try:
-            while finished_workers < active_workers:
-                event = event_queue.get()
-                if event.get("type") == "__task_done__":
-                    finished_workers += 1
-                    continue
-                yield event
+            appended_tasks = self._append_followup_tasks(
+                state,
+                review.followup_tasks,
+                round_id=current_round + 1,
+            )
+            if not appended_tasks:
+                yield {
+                    "type": "status",
+                    "message": "未生成有效追加任务，准备生成最终报告",
+                }
+                break
 
-            while True:
-                try:
-                    event = event_queue.get_nowait()
-                except Empty:
-                    break
-                if event.get("type") != "__task_done__":
-                    yield event
-        finally:
-            self._set_tool_event_sink(None)
-            for thread in threads:
-                thread.join()
+            yield {
+                "type": "status",
+                "message": f"发现研究缺口：{review.overall_gap or '需要补充证据'}，已追加 {len(appended_tasks)} 个任务",
+            }
+            yield {
+                "type": "todo_list",
+                "tasks": [self._serialize_task(t) for t in state.todo_items],
+                "step": 0,
+            }
+            current_round += 1
 
+        yield {
+            "type": "status",
+            "message": "任务执行完成，正在生成最终报告",
+        }
         report = self.reporting.generate_report(state)
-        final_step = len(state.todo_items) + 1
+        final_step = step_counter
         for event in self._drain_tool_events(state, step=final_step):
             yield event
         state.structured_report = report
@@ -355,6 +444,15 @@ class DeepResearchAgent:
     ) -> Iterator[dict[str, Any]]:
         """Run search + summarization for a single task."""
         task.status = "in_progress"
+        if task.origin == "memory":
+            for event in self._execute_memory_recall_task(
+                state,
+                task,
+                emit_stream=emit_stream,
+                step=step,
+            ):
+                yield event
+            return
         initial_backend = (
             LOCAL_LIBRARY_BACKEND
             if self._looks_like_local_research_query(task.query)
@@ -607,6 +705,266 @@ class DeepResearchAgent:
         else:
             self._drain_tool_events(state)
 
+    def _execute_memory_recall_task(
+        self,
+        state: SummaryState,
+        task: TodoItem,
+        *,
+        emit_stream: bool,
+        step: int | None,
+    ) -> Iterator[dict[str, Any]]:
+        """Answer session-history questions directly from recalled memory."""
+
+        task.latest_query = task.query
+        task.search_backend = "memory"
+        task.attempt_count = 1
+        task.needs_followup = False
+        task.evidence_gap_reason = None
+
+        summary, sources_summary, evidence_count = self._build_memory_recall_answer(
+            state,
+            task.query,
+        )
+        task.summary = summary
+        task.sources_summary = sources_summary
+        task.evidence_count = evidence_count
+        task.top_score = 1.0 if evidence_count else 0.0
+        task.notices = ["本任务直接基于当前会话历史与语义记忆生成，未进行联网搜索。"]
+        task.status = "completed"
+
+        self.memory_service.save_task_memory(state.run_id, task)
+        with self._state_lock:
+            state.web_research_results.append(summary)
+            state.sources_gathered.append(sources_summary)
+            state.research_loop_count += 1
+
+        if emit_stream:
+            yield {
+                "type": "sources",
+                "task_id": task.id,
+                "latest_sources": sources_summary,
+                "raw_context": summary,
+                "step": step,
+                "backend": "memory",
+                "attempt_count": task.attempt_count,
+                "evidence_count": task.evidence_count,
+                "top_score": task.top_score,
+                "needs_followup": task.needs_followup,
+                "latest_query": task.latest_query,
+                "evidence_gap_reason": task.evidence_gap_reason,
+                "note_id": task.note_id,
+                "note_path": task.note_path,
+            }
+            yield {
+                "type": "task_status",
+                "task_id": task.id,
+                "status": "completed",
+                "summary": task.summary,
+                "sources_summary": task.sources_summary,
+                "note_id": task.note_id,
+                "note_path": task.note_path,
+                "attempt_count": task.attempt_count,
+                "search_backend": task.search_backend,
+                "evidence_count": task.evidence_count,
+                "top_score": task.top_score,
+                "needs_followup": task.needs_followup,
+                "latest_query": task.latest_query,
+                "evidence_gap_reason": task.evidence_gap_reason,
+                "step": step,
+            }
+
+    def _looks_like_memory_recall_query(self, topic: str) -> bool:
+        """Detect user questions asking about prior conversation history."""
+
+        normalized = (topic or "").strip().lower()
+        if not normalized:
+            return False
+        return any(re.search(pattern, normalized) for pattern in MEMORY_RECALL_PATTERNS)
+
+    def _has_recallable_history(self, recalled_context: dict[str, Any] | None) -> bool:
+        """Return whether current session has enough history to answer from memory."""
+
+        if not recalled_context:
+            return False
+        return bool(
+            (recalled_context.get("session_runs") or [])
+            or (recalled_context.get("recent_tasks") or [])
+            or (recalled_context.get("session_facts") or recalled_context.get("semantic_facts") or [])
+        )
+
+    def _build_memory_recall_task(self, state: SummaryState) -> TodoItem:
+        """Create a synthetic task that answers directly from session memory."""
+
+        return TodoItem(
+            id=1,
+            title="会话历史回顾",
+            intent="基于当前会话历史回答用户是否曾讨论过相关主题，并提炼已有结论",
+            query=state.research_topic,
+            origin="memory",
+        )
+
+    def _build_memory_recall_answer(
+        self,
+        state: SummaryState,
+        query: str,
+    ) -> tuple[str, str, int]:
+        """Summarize relevant session history without hitting external search."""
+
+        recalled = state.recalled_context or {}
+        session_runs = [
+            run
+            for run in (recalled.get("session_runs") or [])
+            if str(run.get("topic") or "").strip() != query.strip()
+        ]
+        recent_tasks = list(recalled.get("recent_tasks") or [])
+        semantic_facts = list(recalled.get("session_facts") or recalled.get("semantic_facts") or [])
+        terms = self._extract_memory_terms(query)
+
+        task_summaries_by_run: dict[str, list[str]] = {}
+        for item in recent_tasks:
+            run_id = str(item.get("run_id") or "").strip()
+            summary = str(item.get("summary") or "").strip()
+            title = str(item.get("title") or "").strip()
+            if not run_id:
+                continue
+            task_summaries_by_run.setdefault(run_id, [])
+            if title:
+                task_summaries_by_run[run_id].append(title)
+            if summary:
+                task_summaries_by_run[run_id].append(summary[:300])
+
+        semantic_run_ids = [
+            str(item.get("run_id") or "").strip()
+            for item in semantic_facts
+            if str(item.get("run_id") or "").strip()
+        ]
+
+        scored_runs: list[tuple[int, dict[str, Any]]] = []
+        for run in session_runs:
+            run_id = str(run.get("run_id") or "").strip()
+            if not run_id:
+                continue
+            text = " ".join(
+                [
+                    str(run.get("topic") or ""),
+                    str(run.get("report_excerpt") or ""),
+                    " ".join(task_summaries_by_run.get(run_id, [])),
+                ]
+            )
+            score = sum(1 for term in terms if term and term in text)
+            if run_id in semantic_run_ids:
+                score += 2
+            scored_runs.append((score, run))
+
+        relevant_runs = [
+            run for score, run in sorted(scored_runs, key=lambda item: item[0], reverse=True) if score > 0
+        ]
+        if not relevant_runs:
+            relevant_runs = session_runs[:3]
+
+        relevant_run_ids = {
+            str(run.get("run_id") or "").strip()
+            for run in relevant_runs
+            if str(run.get("run_id") or "").strip()
+        }
+        relevant_facts = [
+            item
+            for item in semantic_facts
+            if not relevant_run_ids
+            or str(item.get("run_id") or "").strip() in relevant_run_ids
+        ]
+
+        matched_topic_lines: list[str] = []
+        for idx, run in enumerate(relevant_runs[:3], start=1):
+            topic = str(run.get("topic") or "未知主题").strip()
+            finished_at = str(run.get("finished_at") or "").strip()
+            matched_topic_lines.append(
+                f"{idx}. {topic}" + (f"（完成于 {finished_at[:10]}）" if finished_at else "")
+            )
+
+        fact_lines: list[str] = []
+        seen_facts: set[str] = set()
+        for item in relevant_facts[:5]:
+            fact = str(item.get("fact") or "").strip()
+            if not fact or fact in seen_facts:
+                continue
+            seen_facts.add(fact)
+            fact_lines.append(f"- {fact}")
+
+        if matched_topic_lines:
+            summary_lines = [
+                "# 会话历史回顾",
+                "",
+                "## 结论",
+                "是的，在当前会话里我找到了与这次问题相关的历史研究记录。",
+                "",
+                "## 我能回忆到的相关主题",
+                *matched_topic_lines,
+            ]
+            if fact_lines:
+                summary_lines.extend(
+                    [
+                        "",
+                        "## 已沉淀的关键结论",
+                        *fact_lines,
+                    ]
+                )
+            summary_lines.extend(
+                [
+                    "",
+                    "## 说明",
+                    "这次回答直接基于当前会话中的历史研究记录与语义记忆生成，未额外联网搜索。",
+                ]
+            )
+        else:
+            summary_lines = [
+                "# 会话历史回顾",
+                "",
+                "## 结论",
+                "当前会话中没有找到足够相关的历史研究记录来直接回答这个回忆型问题。",
+                "",
+                "## 说明",
+                "如果你愿意，可以直接指出你想回顾的具体主题，我再基于已有会话内容为你整理。",
+            ]
+
+        source_lines: list[str] = []
+        for idx, run in enumerate(relevant_runs[:3], start=1):
+            source_lines.extend(
+                [
+                    f"Source: 会话历史 {idx}",
+                    f"信息内容: 主题：{str(run.get('topic') or '').strip()}",
+                ]
+            )
+        for idx, item in enumerate(relevant_facts[:3], start=1):
+            fact = str(item.get("fact") or "").strip()
+            if not fact:
+                continue
+            source_lines.extend(
+                [
+                    f"Source: 语义记忆 {idx}",
+                    f"信息内容: {fact}",
+                ]
+            )
+
+        summary = "\n".join(summary_lines).strip()
+        sources_summary = "\n".join(source_lines).strip()
+        evidence_count = len(relevant_runs[:3]) + len(relevant_facts[:5])
+        return summary, sources_summary, evidence_count
+
+    def _extract_memory_terms(self, query: str) -> set[str]:
+        """Extract coarse-grained semantic terms for memory matching."""
+
+        raw_terms = re.findall(r"[\u4e00-\u9fff]{2,}|[A-Za-z0-9][A-Za-z0-9_-]{1,}", query or "")
+        terms: set[str] = set()
+        for term in raw_terms:
+            normalized = term.strip().lower()
+            if not normalized or normalized in MEMORY_QUERY_STOPWORDS:
+                continue
+            terms.add(normalized)
+            for extra in MEMORY_TERM_EXPANSIONS.get(normalized, set()):
+                terms.add(extra.lower())
+        return terms
+
     def _drain_tool_events(
         self,
         state: SummaryState,
@@ -624,6 +982,96 @@ class DeepResearchAgent:
         """Expose recorded tool events for legacy integrations."""
         return self._tool_tracker.as_dicts()
 
+    def _initialize_round_metadata(
+        self,
+        tasks: list[TodoItem],
+        *,
+        round_id: int,
+        origin: str,
+    ) -> None:
+        """Initialize round metadata for a batch of tasks."""
+
+        for task in tasks:
+            task.round_id = round_id
+            task.origin = origin
+            if task.parent_task_id is None:
+                task.parent_task_id = None
+
+    def _pending_tasks_for_round(self, state: SummaryState, round_id: int) -> list[TodoItem]:
+        """Return the tasks still pending for a given research round."""
+
+        return [
+            task
+            for task in state.todo_items
+            if task.round_id == round_id and task.status == "pending"
+        ]
+
+    def _append_followup_tasks(
+        self,
+        state: SummaryState,
+        followup_tasks: list[dict[str, Any]],
+        *,
+        round_id: int,
+    ) -> list[TodoItem]:
+        """Append reviewer-proposed tasks while avoiding exact duplicates."""
+
+        appended: list[TodoItem] = []
+        next_id = max((task.id for task in state.todo_items), default=0) + 1
+
+        for item in followup_tasks:
+            title = str(item.get("title") or "").strip()
+            intent = str(item.get("intent") or "").strip()
+            query = str(item.get("query") or "").strip()
+            raw_parent = item.get("parent_task_id")
+
+            if not (title and intent and query):
+                continue
+            if self._is_duplicate_task(state.todo_items, title=title, query=query):
+                continue
+
+            parent_task_id: int | None = None
+            if isinstance(raw_parent, int):
+                parent_task_id = raw_parent
+            elif isinstance(raw_parent, str) and raw_parent.isdigit():
+                parent_task_id = int(raw_parent)
+
+            task = TodoItem(
+                id=next_id,
+                title=title,
+                intent=intent,
+                query=query,
+                round_id=round_id,
+                origin="reviewer",
+                parent_task_id=parent_task_id,
+            )
+            state.todo_items.append(task)
+            appended.append(task)
+            next_id += 1
+
+        return appended
+
+    def _is_duplicate_task(
+        self,
+        existing_tasks: list[TodoItem],
+        *,
+        title: str,
+        query: str,
+    ) -> bool:
+        """Check whether a follow-up task duplicates an existing task."""
+
+        normalized_title = re.sub(r"\s+", "", title).lower()
+        normalized_query = re.sub(r"\s+", " ", query).strip().lower()
+
+        for task in existing_tasks:
+            task_title = re.sub(r"\s+", "", task.title).lower()
+            task_query = re.sub(r"\s+", " ", (task.latest_query or task.query)).strip().lower()
+            if task_title == normalized_title:
+                return True
+            if task_query and task_query == normalized_query:
+                return True
+
+        return False
+
     def _serialize_task(self, task: TodoItem) -> dict[str, Any]:
         """Convert task dataclass to serializable dict for frontend."""
         return {
@@ -631,6 +1079,9 @@ class DeepResearchAgent:
             "title": task.title,
             "intent": task.intent,
             "query": task.query,
+            "round_id": task.round_id,
+            "origin": task.origin,
+            "parent_task_id": task.parent_task_id,
             "status": task.status,
             "summary": task.summary,
             "sources_summary": task.sources_summary,

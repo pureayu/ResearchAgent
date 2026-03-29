@@ -24,10 +24,14 @@ todo_planner_system_prompt = """
 - 你可能会收到同一研究会话的最近上下文，包括：
   - `session_runs`：最近几轮研究的整体主题、完成时间、报告摘要；
   - `recent_tasks`：最近完成或跳过的具体任务及其摘要。
-- 这些上下文属于当前会话的历史记忆，应优先用于避免重复规划，而不是重新从零拆题。
+  - `session_facts`：当前会话内沉淀出的语义结论；
+  - `profile_facts`：用户长期目标、偏好、约束、关注主题；
+  - `global_facts`：跨 session 可复用的稳定知识。
+- 这些上下文属于当前问题可复用的记忆，应优先用于避免重复规划、补足隐含背景，而不是重新从零拆题。
 - 如果历史中已经有高度重复、且状态为 `completed` 的任务，本轮应避免再次拆出几乎相同的任务，除非当前主题明确要求继续深入。
 - 如果历史中存在 `skipped`、覆盖不足、或明显未完成的任务，可优先规划补充性任务。
-- 如果历史报告或任务摘要已经覆盖背景知识，本轮任务应更多聚焦新增问题、深化分析、补足缺口，而不是重复“背景梳理”。
+- 如果 `profile_facts` 提示用户存在明确目标或约束（例如减肥、改善睡眠、预算限制、偏好简洁回答），规划时应把这些信息视为隐式上下文。
+- 如果历史报告、任务摘要或 `global_facts` 已覆盖背景知识，本轮任务应更多聚焦新增问题、深化分析、补足缺口，而不是重复“背景梳理”。
 - 不要机械复述历史任务名称；应基于当前主题判断哪些历史信息可以复用，哪些地方需要新任务。
 </MEMORY_POLICY>
 
@@ -60,8 +64,10 @@ todo_planner_instructions = """
 1. 先判断哪些问题已经在历史任务或历史报告中被充分覆盖；
 2. 对已充分覆盖的问题，不要重复拆出同质任务；
 3. 对未完成、被跳过、或仅被部分覆盖的问题，可优先补充；
-4. 如果当前主题明显是在追问/继续上一轮研究，应让新任务体现连续性；
-5. 如果当前主题与历史几乎无关，可以弱化历史影响，但不要忽略它的存在。
+4. 如果 `profile_facts` 提示用户有隐含目标或约束，应让任务围绕这些目标组织；
+5. 如果 `global_facts` 中已有相关稳定知识，可在其基础上继续深入，而不是重复基础定义；
+6. 如果当前主题明显是在追问/继续上一轮研究，应让新任务体现连续性；
+7. 如果当前主题与历史几乎无关，可以弱化历史影响，但不要忽略它的存在。
 </MEMORY_USAGE>
 
 <FORMAT>
@@ -145,6 +151,65 @@ report_writer_instructions = """
 """
 
 
+research_reviewer_system_prompt = """
+你是一名研究评审专家，负责判断当前研究是否已经足够回答主题，或是否还需要继续补充调研。
+
+<GOAL>
+1. 审查当前已完成任务对研究主题的覆盖度；
+2. 判断现有证据是否足以形成可靠结论；
+3. 若存在明显缺口，提出 1~3 个追加任务；
+4. 避免重复已有任务，优先补充缺口、失败案例、反例、边界条件、工程证据或未覆盖子问题。
+</GOAL>
+
+<RULES>
+- 不要机械重复已完成且已充分覆盖的任务；
+- 如果当前任务已经足够支持最终报告，应明确给出 `is_sufficient=true`；
+- 如果存在明显证据缺口、论证跳步、关键维度缺失，则给出 follow-up tasks；
+- follow-up tasks 必须具体、可检索、与主题直接相关；
+- 不要输出 Markdown，不要解释过程，只能输出 JSON。
+</RULES>
+"""
+
+
+research_reviewer_instructions = """
+<CONTEXT>
+当前日期：{current_date}
+研究主题：{research_topic}
+当前研究轮次：{current_round}
+最近会话上下文：{recalled_context}
+
+当前任务执行情况：
+{tasks_snapshot}
+</CONTEXT>
+
+<OUTPUT>
+你必须只输出一个 JSON 对象，格式如下：
+{{
+  "is_sufficient": true,
+  "overall_gap": "若已足够可留空，否则简述仍缺什么",
+  "confidence": 0.0,
+  "followup_tasks": [
+    {{
+      "title": "追加任务名称",
+      "intent": "该任务要补足的缺口",
+      "query": "建议使用的检索查询",
+      "parent_task_id": 1
+    }}
+  ]
+}}
+</OUTPUT>
+
+<RULES>
+1. `is_sufficient` 为布尔值；
+2. `confidence` 取 0.0 到 1.0；
+3. `followup_tasks` 最多 3 个；
+4. 如果 `is_sufficient=true`，通常 `followup_tasks` 应为空数组；
+5. 如果历史任务已经覆盖背景，本轮 follow-up 应更聚焦缺口，而不是重新背景梳理；
+6. 若当前研究明显失败或结果极少，可提出更具体的新检索任务，而不是泛化任务。
+</RULES>
+"""
+
+
 semantic_fact_extraction_instructions = """
 你是一名研究知识提炼助手，请从给定研究报告中提炼 3 到 8 条长期可复用的稳定事实。
 
@@ -152,7 +217,8 @@ semantic_fact_extraction_instructions = """
 1. 只保留对未来研究规划、总结或报告仍有价值的稳定结论；
 2. 不要记录任务过程、轮次、临时状态、偶然现象或纯操作信息；
 3. 尽量提炼方法层、工程层、应用层、趋势层的结论；
-4. 每条事实应简洁、清晰、低歧义。
+4. 每条事实应简洁、清晰、低歧义；
+5. 同时给出稳定性和敏感性判断，用于后续 memory 分层。
 </GOAL>
 
 <OUTPUT>
@@ -163,7 +229,9 @@ semantic_fact_extraction_instructions = """
       "scope": "method|engineering|application|trend|evaluation",
       "subject": "事实主体，简短概括",
       "fact": "稳定事实本身",
-      "confidence": 0.0
+      "confidence": 0.0,
+      "stability_score": 0.0,
+      "sensitivity": "low|medium|high"
     }
   ]
 }
@@ -172,6 +240,8 @@ semantic_fact_extraction_instructions = """
 <RULES>
 - `facts` 最多 8 条，最少 0 条；
 - `confidence` 取 0.0 到 1.0 之间的小数；
+- `stability_score` 取 0.0 到 1.0 之间的小数；
+- `sensitivity` 表示是否适合跨 session 复用：通用事实通常为 `low`，带风险判断或健康建议倾向为 `high`；
 - 不要输出 Markdown，不要解释，不要前言后记；
 - 如果报告中没有足够稳定的可复用事实，输出 {"facts": []}。
 </RULES>

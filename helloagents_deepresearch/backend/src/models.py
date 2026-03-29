@@ -15,6 +15,9 @@ class TodoItem:
     title: str
     intent: str
     query: str
+    round_id: int = field(default=1)
+    origin: str = field(default="planner")
+    parent_task_id: Optional[int] = field(default=None)
     status: str = field(default="pending")
     summary: Optional[str] = field(default=None)
     sources_summary: Optional[str] = field(default=None)

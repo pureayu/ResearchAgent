@@ -157,10 +157,7 @@
       </aside>
 
       <!-- 右侧：研究结果 -->
-      <section
-        class="panel panel-result"
-        v-if="todoTasks.length || reportMarkdown || progressLogs.length"
-      >
+      <section class="panel panel-result">
         <header class="status-bar">
           <div class="status-main">
             <div class="status-chip" :class="{ active: loading }">
@@ -179,6 +176,26 @@
           </div>
         </header>
 
+        <section class="workflow-stepper">
+          <article
+            v-for="stage in workflowStages"
+            :key="stage.key"
+            class="stage-card"
+            :class="[`stage-${stage.state}`]"
+          >
+            <div class="stage-head">
+              <span class="stage-marker" :class="{ spinning: stage.state === 'active' }">
+                <span v-if="stage.state === 'done'">✓</span>
+                <span v-else>{{ stage.index }}</span>
+              </span>
+              <div>
+                <h4>{{ stage.label }}</h4>
+                <p>{{ stage.description }}</p>
+              </div>
+            </div>
+          </article>
+        </section>
+
         <div class="timeline-wrapper" v-show="!logsCollapsed && progressLogs.length">
           <transition-group name="timeline" tag="ul" class="timeline">
             <li v-for="(log, index) in progressLogs" :key="`${log}-${index}`">
@@ -188,28 +205,101 @@
           </transition-group>
         </div>
 
+        <div
+          v-if="!todoTasks.length && !reportMarkdown && !progressLogs.length"
+          class="empty-state"
+        >
+          <h3>{{ loading ? "正在初始化研究流程" : error ? "当前没有可展示的结果" : "等待研究开始" }}</h3>
+          <p v-if="loading">
+            已进入研究页面，正在等待任务规划和首批阶段事件返回。
+          </p>
+          <p v-else-if="error">
+            {{ error }}
+          </p>
+          <p v-else>
+            输入研究主题后，这里会展示任务规划、执行进度和最终报告。
+          </p>
+        </div>
+
+        <section v-if="currentTask" class="focus-card">
+          <div class="focus-head">
+            <div>
+              <p class="focus-kicker">当前研究焦点</p>
+              <h3>{{ currentTaskTitle }}</h3>
+              <p class="muted">
+                第 {{ currentTask.roundId }} 轮 · {{ currentTask.origin === "reviewer" ? "自动补充任务" : "初始规划任务" }}
+              </p>
+            </div>
+            <span class="task-status" :class="currentTask.status">
+              {{ formatTaskStatus(currentTask.status) }}
+            </span>
+          </div>
+          <p class="focus-intent">{{ currentTaskIntent }}</p>
+          <div class="focus-metrics">
+            <div class="metric-pill">
+              <span>检索后端</span>
+              <strong>{{ currentTaskSearchBackend || "未执行" }}</strong>
+            </div>
+            <div class="metric-pill">
+              <span>证据数量</span>
+              <strong>{{ currentTaskEvidenceCount }}</strong>
+            </div>
+            <div class="metric-pill">
+              <span>尝试次数</span>
+              <strong>{{ currentTaskAttemptCount }}</strong>
+            </div>
+            <div class="metric-pill" v-if="showComparableTopScore">
+              <span>内部排序分数</span>
+              <strong>{{ formatScore(currentTaskTopScore) }}</strong>
+            </div>
+          </div>
+        </section>
+
         <div class="tasks-section" v-if="todoTasks.length">
           <aside class="tasks-list">
-            <h3>任务清单</h3>
-            <ul>
-              <li
-                v-for="task in todoTasks"
-                :key="task.id"
-                :class="['task-item', { active: task.id === activeTaskId, completed: task.status === 'completed' }]"
+            <div class="tasks-list-header">
+              <h3>研究轮次</h3>
+              <p>默认聚焦当前阶段，已完成轮次可折叠回看。</p>
+            </div>
+            <div class="round-list">
+              <details
+                v-for="round in taskRounds"
+                :key="round.id"
+                class="round-card"
+                :open="round.id === defaultOpenRoundId"
               >
-                <button
-                  type="button"
-                  class="task-button"
-                  @click="activeTaskId = task.id"
-                >
-                  <span class="task-title">{{ task.title }}</span>
-                  <span class="task-status" :class="task.status">
-                    {{ formatTaskStatus(task.status) }}
+                <summary class="round-summary">
+                  <div>
+                    <span class="round-title">第 {{ round.id }} 轮 · {{ round.label }}</span>
+                    <span class="round-meta">
+                      {{ round.completedCount }} / {{ round.tasks.length }} 任务完成
+                    </span>
+                  </div>
+                  <span class="round-badge" :class="round.state">
+                    {{ round.stateLabel }}
                   </span>
-                </button>
-                <p class="task-intent">{{ task.intent }}</p>
-              </li>
-            </ul>
+                </summary>
+                <ul>
+                  <li
+                    v-for="task in round.tasks"
+                    :key="task.id"
+                    :class="['task-item', { active: task.id === activeTaskId, completed: task.status === 'completed' }]"
+                  >
+                    <button
+                      type="button"
+                      class="task-button"
+                      @click="activeTaskId = task.id"
+                    >
+                      <span class="task-title">{{ task.title }}</span>
+                      <span class="task-status" :class="task.status">
+                        {{ formatTaskStatus(task.status) }}
+                      </span>
+                    </button>
+                    <p class="task-intent">{{ task.intent }}</p>
+                  </li>
+                </ul>
+              </details>
+            </div>
           </aside>
 
           <article class="task-detail" v-if="currentTask">
@@ -277,27 +367,34 @@
               :class="{ 'block-highlight': traceHighlight }"
               v-if="currentTaskTraceEntries.length"
             >
-              <h3>任务执行轨迹</h3>
-              <ul class="trace-list">
-                <li
-                  v-for="entry in currentTaskTraceEntries"
-                  :key="`${entry.timestamp}-${entry.kind}-${entry.message}`"
-                  class="trace-entry"
-                >
-                  <div class="trace-head">
-                    <span class="trace-kind">{{ entry.kindLabel }}</span>
-                    <span class="trace-message">{{ entry.message }}</span>
+              <details :open="currentTask.status === 'in_progress'">
+                <summary class="detail-summary">
+                  <div>
+                    <h3>任务执行轨迹</h3>
+                    <p>共 {{ currentTaskTraceEntries.length }} 条事件，展开查看检索、改写与阶段切换细节。</p>
                   </div>
-                  <p v-if="entry.backend" class="trace-meta">
-                    backend={{ entry.backend }}
-                    <span v-if="entry.attempt !== null"> · attempt={{ entry.attempt }}</span>
-                    <span v-if="entry.evidenceCount !== null"> · evidence={{ entry.evidenceCount }}</span>
-                    <span v-if="entry.topScore !== null"> · score={{ formatScore(entry.topScore) }}</span>
-                  </p>
-                  <p v-if="entry.query" class="trace-query">query: {{ entry.query }}</p>
-                  <p v-if="entry.extra" class="trace-extra">{{ entry.extra }}</p>
-                </li>
-              </ul>
+                </summary>
+                <ul class="trace-list">
+                  <li
+                    v-for="entry in currentTaskTraceEntries"
+                    :key="`${entry.timestamp}-${entry.kind}-${entry.message}`"
+                    class="trace-entry"
+                  >
+                    <div class="trace-head">
+                      <span class="trace-kind">{{ entry.kindLabel }}</span>
+                      <span class="trace-message">{{ entry.message }}</span>
+                    </div>
+                    <p v-if="entry.backend" class="trace-meta">
+                      backend={{ entry.backend }}
+                      <span v-if="entry.attempt !== null"> · attempt={{ entry.attempt }}</span>
+                      <span v-if="entry.evidenceCount !== null"> · evidence={{ entry.evidenceCount }}</span>
+                      <span v-if="entry.topScore !== null"> · score={{ formatScore(entry.topScore) }}</span>
+                    </p>
+                    <p v-if="entry.query" class="trace-query">query: {{ entry.query }}</p>
+                    <p v-if="entry.extra" class="trace-extra">{{ entry.extra }}</p>
+                  </li>
+                </ul>
+              </details>
             </section>
 
             <section v-if="currentTask && currentTask.notices.length" class="task-notices">
@@ -400,17 +497,23 @@
           </article>
         </div>
 
-        <div
+        <details
           v-if="reportMarkdown"
           class="report-block"
           :class="{ 'block-highlight': reportHighlight }"
+          :open="!loading"
         >
-          <h3>最终报告</h3>
+          <summary class="detail-summary">
+            <div>
+              <h3>最终报告</h3>
+              <p>研究完成后默认展开，可随时折叠回到任务视图。</p>
+            </div>
+          </summary>
           <div
             class="block-markdown report-markdown"
             v-html="renderMarkdown(reportMarkdown)"
           ></div>
-        </div>
+        </details>
 
         <form class="chat-composer" @submit.prevent="handleFollowUpSubmit">
           <textarea
@@ -479,6 +582,9 @@ interface TodoTaskView {
   title: string;
   intent: string;
   query: string;
+  roundId: number;
+  origin: string;
+  parentTaskId: number | null;
   status: string;
   summary: string;
   sourcesSummary: string;
@@ -506,6 +612,23 @@ interface ConversationTurn {
   totalTasks: number;
   sessionId: string | null;
   timestamp: number;
+}
+
+interface WorkflowStageView {
+  key: string;
+  index: number;
+  label: string;
+  description: string;
+  state: "done" | "active" | "idle";
+}
+
+interface TaskRoundView {
+  id: number;
+  label: string;
+  tasks: TodoTaskView[];
+  completedCount: number;
+  state: "pending" | "in_progress" | "completed";
+  stateLabel: string;
 }
 
 const SESSION_STORAGE_KEY = "deepresearch_session_id";
@@ -602,6 +725,109 @@ const currentTaskLatestQuery = computed(
 const showComparableTopScore = computed(
   () => currentTaskSearchBackend.value === "local_library"
 );
+
+const activeStageIndex = computed(() => {
+  if (reportMarkdown.value || /报告|语义记忆/.test(loadingLabel.value)) {
+    return 3;
+  }
+  if (/评估|覆盖度|review/i.test(loadingLabel.value)) {
+    return 2;
+  }
+  if (todoTasks.value.length) {
+    return 1;
+  }
+  return 0;
+});
+
+const workflowStages = computed<WorkflowStageView[]>(() => {
+  const stageDefs = [
+    {
+      key: "plan",
+      label: "规划任务",
+      description: "生成初始任务和查询方向"
+    },
+    {
+      key: "execute",
+      label: "执行检索",
+      description: "检索证据并持续补充来源"
+    },
+    {
+      key: "review",
+      label: "覆盖评审",
+      description: "检查缺口并决定是否追加研究"
+    },
+    {
+      key: "report",
+      label: "生成报告",
+      description: "汇总输出最终结论与摘要"
+    }
+  ];
+
+  return stageDefs.map((stage, idx) => {
+    let state: WorkflowStageView["state"] = "idle";
+    if (reportMarkdown.value) {
+      state = "done";
+    } else if (!loading.value && progressLogs.value.length) {
+      state = idx <= activeStageIndex.value ? "done" : "idle";
+    } else if (idx < activeStageIndex.value) {
+      state = "done";
+    } else if (idx === activeStageIndex.value) {
+      state = "active";
+    }
+
+    return {
+      ...stage,
+      index: idx + 1,
+      state
+    };
+  });
+});
+
+const taskRounds = computed<TaskRoundView[]>(() => {
+  const groups = new Map<number, TodoTaskView[]>();
+  for (const task of todoTasks.value) {
+    const roundId = task.roundId || 1;
+    const existing = groups.get(roundId) || [];
+    existing.push(task);
+    groups.set(roundId, existing);
+  }
+
+  return [...groups.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([id, tasks]) => {
+      const completedCount = tasks.filter((task) => task.status === "completed").length;
+      const hasInProgress = tasks.some((task) => task.status === "in_progress");
+      const allCompleted = completedCount === tasks.length && tasks.length > 0;
+      const createdByReviewer = tasks.some((task) => task.origin === "reviewer");
+      const state: TaskRoundView["state"] = allCompleted
+        ? "completed"
+        : hasInProgress
+        ? "in_progress"
+        : "pending";
+
+      return {
+        id,
+        label: id === 1 ? "初始规划" : createdByReviewer ? "自动补充" : "补充研究",
+        tasks,
+        completedCount,
+        state,
+        stateLabel:
+          state === "completed"
+            ? "已完成"
+            : state === "in_progress"
+            ? "进行中"
+            : "待执行"
+      };
+    });
+});
+
+const defaultOpenRoundId = computed(() => {
+  if (currentTask.value?.roundId) {
+    return currentTask.value.roundId;
+  }
+  const lastRound = taskRounds.value[taskRounds.value.length - 1];
+  return lastRound?.id ?? 1;
+});
 
 function escapeHtml(raw: string): string {
   return raw
@@ -923,6 +1149,15 @@ function upsertTaskMetadata(task: TodoTaskView, payload: Record<string, unknown>
   if (typeof payload.query === "string" && payload.query.trim()) {
     task.query = payload.query.trim();
   }
+  if (typeof payload.round_id === "number") {
+    task.roundId = payload.round_id;
+  }
+  if (typeof payload.origin === "string" && payload.origin.trim()) {
+    task.origin = payload.origin.trim();
+  }
+  if (typeof payload.parent_task_id === "number") {
+    task.parentTaskId = payload.parent_task_id;
+  }
   if (typeof payload.search_backend === "string" && payload.search_backend.trim()) {
     task.searchBackend = payload.search_backend.trim();
   }
@@ -1073,6 +1308,9 @@ const submitResearch = async (rawTopic: string) => {
           const tasks = Array.isArray(event.tasks)
             ? (event.tasks as Record<string, unknown>[])
             : [];
+          const existingById = new Map(
+            todoTasks.value.map((task) => [task.id, task] as const)
+          );
 
           todoTasks.value = tasks.map((item, index) => {
             const rawId =
@@ -1090,6 +1328,22 @@ const submitResearch = async (rawTopic: string) => {
               typeof item.note_path === "string" && item.note_path.trim()
                 ? item.note_path.trim()
                 : null;
+            const existing = existingById.get(id);
+            const incomingSummary =
+              typeof item.summary === "string" && item.summary.trim()
+                ? item.summary.trim()
+                : "";
+            const incomingSourcesSummary =
+              typeof item.sources_summary === "string" &&
+              item.sources_summary.trim()
+                ? item.sources_summary.trim()
+                : "";
+            const summary = incomingSummary || existing?.summary || "";
+            const sourcesSummary =
+              incomingSourcesSummary || existing?.sourcesSummary || "";
+            const sourceItems = sourcesSummary
+              ? parseSources(sourcesSummary)
+              : existing?.sourceItems || [];
 
             return {
               id,
@@ -1105,17 +1359,29 @@ const submitResearch = async (rawTopic: string) => {
                 typeof item.query === "string" && item.query.trim()
                   ? item.query.trim()
                   : form.topic.trim(),
+              roundId:
+                typeof item.round_id === "number"
+                  ? item.round_id
+                  : existing?.roundId || 1,
+              origin:
+                typeof item.origin === "string" && item.origin.trim()
+                  ? item.origin.trim()
+                  : existing?.origin || "planner",
+              parentTaskId:
+                typeof item.parent_task_id === "number"
+                  ? item.parent_task_id
+                  : existing?.parentTaskId ?? null,
               status:
                 typeof item.status === "string" && item.status.trim()
                   ? item.status.trim()
                   : "pending",
-              summary: "",
-              sourcesSummary: "",
-              sourceItems: [],
-              notices: [],
-              noteId,
-              notePath,
-              toolCalls: [],
+              summary,
+              sourcesSummary,
+              sourceItems,
+              notices: existing?.notices || [],
+              noteId: noteId || existing?.noteId || null,
+              notePath: notePath || existing?.notePath || null,
+              toolCalls: existing?.toolCalls || [],
               attemptCount:
                 typeof item.attempt_count === "number" ? item.attempt_count : 0,
               searchBackend:
@@ -1133,9 +1399,9 @@ const submitResearch = async (rawTopic: string) => {
               evidenceGapReason:
                 typeof item.evidence_gap_reason === "string"
                   ? item.evidence_gap_reason
-                  : null,
-              sourceBreakdown: {},
-              traceEntries: []
+                  : existing?.evidenceGapReason || null,
+              sourceBreakdown: existing?.sourceBreakdown || {},
+              traceEntries: existing?.traceEntries || []
             } as TodoTaskView;
           });
 
@@ -1838,6 +2104,164 @@ select:focus {
   gap: 18px;
 }
 
+.workflow-stepper {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.stage-card {
+  padding: 14px 16px;
+  border-radius: 18px;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  background: rgba(255, 255, 255, 0.82);
+}
+
+.stage-card.stage-active {
+  border-color: rgba(59, 130, 246, 0.4);
+  background: rgba(219, 234, 254, 0.56);
+  box-shadow: 0 10px 28px rgba(59, 130, 246, 0.12);
+}
+
+.stage-card.stage-done {
+  border-color: rgba(34, 197, 94, 0.24);
+  background: rgba(240, 253, 244, 0.82);
+}
+
+.stage-head {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.stage-head h4 {
+  margin: 0;
+  font-size: 15px;
+  color: #0f172a;
+}
+
+.stage-head p {
+  margin: 4px 0 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #64748b;
+}
+
+.stage-marker {
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(226, 232, 240, 0.9);
+  color: #475569;
+  font-size: 12px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.stage-active .stage-marker {
+  background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+  color: #fff;
+  box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.14);
+}
+
+.stage-done .stage-marker {
+  background: rgba(34, 197, 94, 0.18);
+  color: #15803d;
+}
+
+.stage-marker.spinning {
+  animation: spin 1.1s linear infinite;
+}
+
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 28px 24px;
+  border-radius: 18px;
+  border: 1px dashed rgba(148, 163, 184, 0.35);
+  background: rgba(255, 255, 255, 0.72);
+  color: #475569;
+}
+
+.empty-state h3 {
+  margin: 0;
+  font-size: 18px;
+  color: #0f172a;
+}
+
+.empty-state p {
+  margin: 0;
+  line-height: 1.7;
+}
+
+.focus-card {
+  padding: 20px 22px;
+  border-radius: 20px;
+  border: 1px solid rgba(99, 102, 241, 0.2);
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.92), rgba(239, 246, 255, 0.9)),
+    rgba(255, 255, 255, 0.9);
+  box-shadow: 0 20px 44px rgba(59, 130, 246, 0.08);
+}
+
+.focus-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.focus-kicker {
+  margin: 0 0 6px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #3b82f6;
+}
+
+.focus-head h3 {
+  margin: 0;
+  font-size: 24px;
+  color: #0f172a;
+}
+
+.focus-intent {
+  margin: 14px 0 0;
+  font-size: 15px;
+  line-height: 1.8;
+  color: #334155;
+}
+
+.focus-metrics {
+  margin-top: 16px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+}
+
+.metric-pill {
+  padding: 12px 14px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.88);
+  border: 1px solid rgba(148, 163, 184, 0.2);
+}
+
+.metric-pill span {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 12px;
+  color: #64748b;
+}
+
+.metric-pill strong {
+  color: #0f172a;
+}
+
 .status-bar {
   display: flex;
   align-items: center;
@@ -1991,6 +2415,87 @@ select:focus {
   flex-direction: column;
   gap: 16px;
   box-shadow: inset 0 0 0 1px rgba(226, 232, 240, 0.4);
+}
+
+.tasks-list-header h3 {
+  margin: 0;
+}
+
+.tasks-list-header p {
+  margin: 6px 0 0;
+  color: #64748b;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.round-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.round-card {
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 16px;
+  background: rgba(248, 250, 252, 0.86);
+  overflow: hidden;
+}
+
+.round-card[open] {
+  border-color: rgba(99, 102, 241, 0.32);
+  background: rgba(238, 242, 255, 0.56);
+}
+
+.round-summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 14px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.round-summary::-webkit-details-marker {
+  display: none;
+}
+
+.round-title {
+  display: block;
+  font-size: 14px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.round-meta {
+  display: block;
+  margin-top: 4px;
+  font-size: 12px;
+  color: #64748b;
+}
+
+.round-badge {
+  padding: 5px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  background: rgba(148, 163, 184, 0.2);
+  color: #475569;
+}
+
+.round-badge.completed {
+  background: rgba(34, 197, 94, 0.18);
+  color: #15803d;
+}
+
+.round-badge.in_progress {
+  background: rgba(99, 102, 241, 0.18);
+  color: #4338ca;
+}
+
+.round-badge.pending {
+  background: rgba(148, 163, 184, 0.18);
+  color: #475569;
 }
 
 .tasks-list h3 {
@@ -2238,6 +2743,29 @@ select:focus {
   font-size: 16px;
   font-weight: 600;
   color: #1f2937;
+}
+
+.detail-summary {
+  list-style: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.detail-summary::-webkit-details-marker {
+  display: none;
+}
+
+.detail-summary h3 {
+  margin: 0;
+}
+
+.detail-summary p {
+  margin: 4px 0 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: #64748b;
 }
 
 .trace-list {
@@ -2705,6 +3233,10 @@ select:focus {
     max-width: none;
   }
 
+  .workflow-stepper {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .status-bar {
     flex-direction: column;
     align-items: flex-start;
@@ -2723,6 +3255,10 @@ select:focus {
 @media (max-width: 600px) {
   .options {
     flex-direction: column;
+  }
+
+  .workflow-stepper {
+    grid-template-columns: 1fr;
   }
 
   .status-meta {

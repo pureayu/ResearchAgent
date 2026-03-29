@@ -72,7 +72,9 @@ class PlanningService:
 
         session_runs = recalled_context.get("session_runs") or []
         recent_tasks = recalled_context.get("recent_tasks") or []
-        semantic_facts = recalled_context.get("semantic_facts") or []
+        session_facts = recalled_context.get("session_facts") or recalled_context.get("semantic_facts") or []
+        profile_facts = recalled_context.get("profile_facts") or []
+        global_facts = recalled_context.get("global_facts") or []
 
         sections: list[str] = []
 
@@ -103,9 +105,29 @@ class PlanningService:
                     lines.append(f"   摘要：{summary}")
             sections.append("\n".join(lines))
 
-        if semantic_facts:
-            lines = ["已沉淀事实："]
-            for idx, fact in enumerate(semantic_facts[:5], start=1):
+        if session_facts:
+            lines = ["当前会话已沉淀结论："]
+            for idx, fact in enumerate(session_facts[:5], start=1):
+                fact_text = str(fact.get("fact") or "").strip()
+                if not fact_text:
+                    continue
+                lines.append(f"{idx}. {fact_text}")
+            if len(lines) > 1:
+                sections.append("\n".join(lines))
+
+        if profile_facts:
+            lines = ["用户长期目标/偏好："]
+            for idx, fact in enumerate(profile_facts[:5], start=1):
+                fact_text = str(fact.get("fact") or "").strip()
+                if not fact_text:
+                    continue
+                lines.append(f"{idx}. {fact_text}")
+            if len(lines) > 1:
+                sections.append("\n".join(lines))
+
+        if global_facts:
+            lines = ["跨会话稳定知识："]
+            for idx, fact in enumerate(global_facts[:5], start=1):
                 fact_text = str(fact.get("fact") or "").strip()
                 if not fact_text:
                     continue

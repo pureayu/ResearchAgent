@@ -18,6 +18,116 @@ from config import Configuration
 from models import SummaryState, TodoItem
 from prompts import semantic_fact_extraction_instructions
 
+SESSION_MEMORY_SCOPE = "session"
+GLOBAL_MEMORY_SCOPE = "global"
+PROFILE_MEMORY_SCOPE = "profile"
+LOW_SENSITIVITY = "low"
+MEDIUM_SENSITIVITY = "medium"
+HIGH_SENSITIVITY = "high"
+
+GLOBAL_PROMOTION_CONFIDENCE = 0.85
+GLOBAL_PROMOTION_STABILITY = 0.80
+
+MEDICAL_MEMORY_KEYWORDS = {
+    "药",
+    "药品",
+    "药物",
+    "用药",
+    "服药",
+    "褪黑素",
+    "副作用",
+    "禁忌",
+    "失眠",
+    "睡眠",
+    "智齿",
+    "拔牙",
+    "口腔",
+    "症状",
+    "疾病",
+    "治疗",
+    "医疗",
+}
+
+PROFILE_RULES = {
+    "goal:weight_loss": {
+        "patterns": (r"减肥", r"减脂", r"瘦身", r"控卡", r"控制热量", r"卡路里"),
+        "fact": "用户近期目标是减肥或控制热量摄入",
+        "kind": "goal",
+        "sensitivity": LOW_SENSITIVITY,
+        "expansions": ("减肥", "减脂", "控卡", "热量", "卡路里", "饮食", "食物"),
+    },
+    "goal:sleep_improvement": {
+        "patterns": (r"失眠", r"睡不好", r"入睡", r"睡眠", r"睡不着"),
+        "fact": "用户近期目标是改善睡眠质量",
+        "kind": "goal",
+        "sensitivity": MEDIUM_SENSITIVITY,
+        "expansions": ("睡眠", "失眠", "褪黑素", "助眠", "入睡"),
+    },
+    "goal:muscle_gain": {
+        "patterns": (r"增肌", r"长肌肉", r"练肌肉"),
+        "fact": "用户近期目标是增肌或提升训练效果",
+        "kind": "goal",
+        "sensitivity": LOW_SENSITIVITY,
+        "expansions": ("增肌", "蛋白", "训练", "热量", "营养"),
+    },
+    "goal:exam_preparation": {
+        "patterns": (r"备考", r"考试", r"刷题", r"复习"),
+        "fact": "用户近期目标是备考或提升学习表现",
+        "kind": "goal",
+        "sensitivity": LOW_SENSITIVITY,
+        "expansions": ("备考", "学习", "记忆", "专注", "复习"),
+    },
+    "constraint:side_effect_sensitive": {
+        "patterns": (r"怕副作用", r"副作用.*敏感", r"不想有副作用", r"担心副作用"),
+        "fact": "用户对副作用较敏感，希望避免高风险方案",
+        "kind": "constraint",
+        "sensitivity": MEDIUM_SENSITIVITY,
+        "expansions": ("副作用", "风险", "安全性", "耐受性"),
+    },
+    "constraint:budget_limited": {
+        "patterns": (r"预算有限", r"便宜", r"省钱", r"花费少"),
+        "fact": "用户存在预算限制，希望优先考虑成本较低的方案",
+        "kind": "constraint",
+        "sensitivity": LOW_SENSITIVITY,
+        "expansions": ("预算", "成本", "便宜", "花费"),
+    },
+    "preference:concise_answer": {
+        "patterns": (r"简洁", r"直接一点", r"先给结论", r"一句话"),
+        "fact": "用户偏好简洁直接、先给结论的回答风格",
+        "kind": "preference",
+        "sensitivity": LOW_SENSITIVITY,
+        "expansions": ("简洁", "结论", "直接"),
+    },
+    "preference:chinese_answer": {
+        "patterns": (r"中文回答", r"用中文", r"中文"),
+        "fact": "用户偏好中文回答",
+        "kind": "preference",
+        "sensitivity": LOW_SENSITIVITY,
+        "expansions": ("中文",),
+    },
+    "interest:drug_safety": {
+        "patterns": (r"药品", r"药物", r"用药", r"褪黑素"),
+        "fact": "用户近期持续关注药品、用药或睡眠相关问题",
+        "kind": "interest",
+        "sensitivity": MEDIUM_SENSITIVITY,
+        "expansions": ("药品", "药物", "用药", "褪黑素", "副作用", "睡眠"),
+    },
+    "interest:oral_health": {
+        "patterns": (r"智齿", r"牙齿", r"口腔", r"拔牙"),
+        "fact": "用户近期持续关注口腔与牙齿健康问题",
+        "kind": "interest",
+        "sensitivity": MEDIUM_SENSITIVITY,
+        "expansions": ("口腔", "牙齿", "智齿", "拔牙"),
+    },
+    "interest:edge_inference": {
+        "patterns": (r"端侧", r"推理", r"NPU", r"部署", r"大模型"),
+        "fact": "用户持续关注端侧推理和模型部署相关主题",
+        "kind": "interest",
+        "sensitivity": LOW_SENSITIVITY,
+        "expansions": ("端侧", "推理", "部署", "NPU", "延迟"),
+    },
+}
+
 
 class MemoryService:
     """Facade between the agent runtime and structured long-term memory storage.
@@ -139,6 +249,9 @@ class MemoryService:
                     title TEXT NOT NULL,
                     intent TEXT NOT NULL,
                     query TEXT NOT NULL,
+                    round_id INTEGER DEFAULT 1,
+                    origin TEXT DEFAULT 'planner',
+                    parent_task_id INTEGER,
                     latest_query TEXT,
                     status TEXT NOT NULL,
                     search_backend TEXT,
@@ -162,12 +275,32 @@ class MemoryService:
                     subject TEXT,
                     fact TEXT NOT NULL,
                     embedding TEXT,
+                    memory_scope TEXT NOT NULL DEFAULT 'session',
+                    stability_score REAL DEFAULT 0.0,
+                    sensitivity TEXT NOT NULL DEFAULT 'medium',
+                    source_session_id TEXT,
                     confidence REAL DEFAULT 0.0,
                     created_at TEXT NOT NULL,
                     last_verified_at TEXT NOT NULL
                 )
                 """
             )
+            existing_task_columns = {
+                row["name"]
+                for row in connection.execute("PRAGMA table_info(task_memories)")
+            }
+            if "round_id" not in existing_task_columns:
+                connection.execute(
+                    "ALTER TABLE task_memories ADD COLUMN round_id INTEGER DEFAULT 1"
+                )
+            if "origin" not in existing_task_columns:
+                connection.execute(
+                    "ALTER TABLE task_memories ADD COLUMN origin TEXT DEFAULT 'planner'"
+                )
+            if "parent_task_id" not in existing_task_columns:
+                connection.execute(
+                    "ALTER TABLE task_memories ADD COLUMN parent_task_id INTEGER"
+                )
             existing_fact_columns = {
                 row["name"]
                 for row in connection.execute("PRAGMA table_info(semantic_facts)")
@@ -175,6 +308,22 @@ class MemoryService:
             if "embedding" not in existing_fact_columns:
                 connection.execute(
                     "ALTER TABLE semantic_facts ADD COLUMN embedding TEXT"
+                )
+            if "memory_scope" not in existing_fact_columns:
+                connection.execute(
+                    "ALTER TABLE semantic_facts ADD COLUMN memory_scope TEXT NOT NULL DEFAULT 'session'"
+                )
+            if "stability_score" not in existing_fact_columns:
+                connection.execute(
+                    "ALTER TABLE semantic_facts ADD COLUMN stability_score REAL DEFAULT 0.0"
+                )
+            if "sensitivity" not in existing_fact_columns:
+                connection.execute(
+                    "ALTER TABLE semantic_facts ADD COLUMN sensitivity TEXT NOT NULL DEFAULT 'medium'"
+                )
+            if "source_session_id" not in existing_fact_columns:
+                connection.execute(
+                    "ALTER TABLE semantic_facts ADD COLUMN source_session_id TEXT"
                 )
             try:
                 connection.execute(
@@ -201,6 +350,40 @@ class MemoryService:
                     )
                     """
                 )
+            connection.execute(
+                """
+                UPDATE semantic_facts
+                SET memory_scope = ?
+                WHERE memory_scope IS NULL OR memory_scope = ''
+                """,
+                (SESSION_MEMORY_SCOPE,),
+            )
+            connection.execute(
+                """
+                UPDATE semantic_facts
+                SET stability_score = COALESCE(stability_score, confidence, 0.0)
+                WHERE stability_score IS NULL OR stability_score = 0.0
+                """,
+            )
+            connection.execute(
+                """
+                UPDATE semantic_facts
+                SET sensitivity = ?
+                WHERE sensitivity IS NULL OR sensitivity = ''
+                """,
+                (MEDIUM_SENSITIVITY,),
+            )
+            connection.execute(
+                """
+                UPDATE semantic_facts
+                SET source_session_id = (
+                    SELECT rr.session_id
+                    FROM research_runs rr
+                    WHERE rr.run_id = semantic_facts.run_id
+                )
+                WHERE source_session_id IS NULL OR source_session_id = ''
+                """,
+            )
             connection.commit()
 
     def start_run(self, session_id: str, topic: str) -> str:
@@ -248,6 +431,9 @@ class MemoryService:
                     title,
                     intent,
                     query,
+                    round_id,
+                    origin,
+                    parent_task_id,
                     latest_query,
                     status,
                     search_backend,
@@ -258,7 +444,7 @@ class MemoryService:
                     sources_summary,
                     note_id,
                     created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     run_id,
@@ -266,6 +452,9 @@ class MemoryService:
                     task.title,
                     task.intent,
                     task.query,
+                    task.round_id,
+                    task.origin,
+                    task.parent_task_id,
                     task.latest_query,
                     task.status,
                     task.search_backend,
@@ -347,37 +536,93 @@ class MemoryService:
 
         return resolved_session_id
 
+    def capture_profile_memory(
+        self,
+        run_id: str,
+        session_id: str,
+        topic: str,
+    ) -> list[dict[str, Any]]:
+        """Extract and persist lightweight profile facts from the raw user topic."""
 
-    def load_relevant_context(self, session_id: str | None, topic: str) -> dict[str, Any]:
+        facts = self.extract_profile_facts(topic)
+        self.save_semantic_facts(
+            run_id,
+            topic,
+            facts,
+            session_id=session_id,
+        )
+        return facts
+
+    def extract_profile_facts(self, topic: str) -> list[dict[str, Any]]:
+        """Derive lightweight profile/user-goal facts from the user's raw query."""
+
+        if not topic.strip():
+            return []
+
+        facts: list[dict[str, Any]] = []
+        seen_subjects: set[str] = set()
+
+        for subject, rule in PROFILE_RULES.items():
+            if any(re.search(pattern, topic, flags=re.IGNORECASE) for pattern in rule["patterns"]):
+                if subject in seen_subjects:
+                    continue
+                facts.append(
+                    {
+                        "scope": rule["kind"],
+                        "subject": subject,
+                        "fact": rule["fact"],
+                        "confidence": 0.92,
+                        "stability_score": 0.90,
+                        "sensitivity": rule["sensitivity"],
+                        "memory_scope": PROFILE_MEMORY_SCOPE,
+                    }
+                )
+                seen_subjects.add(subject)
+            if len(facts) >= 3:
+                break
+
+        return facts
+
+
+    def load_relevant_context(
+        self,
+        session_id: str | None,
+        topic: str,
+        *,
+        exclude_run_id: str | None = None,
+    ) -> dict[str, Any]:
         """Load recalled memory context for a new topic.
 
-        Intended future shape:
-        - related_runs
-        - related_tasks
-        - semantic_facts
+        Current shape:
+        - session_runs
+        - recent_tasks
+        - session_facts
+        - profile_facts
+        - global_facts
         """
         session_runs: list[dict[str, Any]] = []
         recent_tasks: list[dict[str, Any]] = []
-        semantic_facts: list[dict[str, Any]] = []
-
-        if not session_id:
-            return {
-                "session_runs": [],
-                "recent_tasks": [],
-                "semantic_facts": [],
-            }
+        session_facts: list[dict[str, Any]] = []
+        profile_facts: list[dict[str, Any]] = []
+        global_facts: list[dict[str, Any]] = []
 
         with self._connect() as connection:
-            run_rows = connection.execute(
+            profile_candidates = self._load_profile_candidates(connection)
+            expanded_topic = self._build_memory_search_text(topic, profile_candidates=profile_candidates)
+
+            run_rows: list[sqlite3.Row] = []
+            if session_id:
+                sql = """
+                    SELECT run_id, session_id, topic, started_at, finished_at, final_report, task_count
+                    FROM research_runs
+                    WHERE session_id = ?
                 """
-                SELECT run_id, session_id, topic, started_at, finished_at, final_report, task_count
-                FROM research_runs
-                WHERE session_id = ?
-                ORDER BY started_at DESC
-                LIMIT 3
-                """,
-                (session_id,),
-            ).fetchall()
+                params: list[Any] = [session_id]
+                if exclude_run_id:
+                    sql += " AND run_id != ?"
+                    params.append(exclude_run_id)
+                sql += " ORDER BY started_at DESC LIMIT 3"
+                run_rows = connection.execute(sql, params).fetchall()
 
             for row in run_rows:
                 final_report = row["final_report"] or ""
@@ -421,20 +666,56 @@ class MemoryService:
                     }
                 )
 
-            semantic_facts = self._search_semantic_facts(connection, topic)
+            if run_ids:
+                session_facts = self._search_semantic_facts(
+                    connection,
+                    expanded_topic,
+                    run_ids=run_ids,
+                    memory_scope=SESSION_MEMORY_SCOPE,
+                )
+            else:
+                session_facts = []
+            profile_facts = self._search_semantic_facts(
+                connection,
+                expanded_topic,
+                memory_scope=PROFILE_MEMORY_SCOPE,
+            )
+            expanded_with_history = self._build_memory_search_text(
+                topic,
+                profile_candidates=profile_facts or profile_candidates,
+                session_facts=session_facts,
+            )
+            global_facts = self._search_semantic_facts(
+                connection,
+                expanded_with_history,
+                memory_scope=GLOBAL_MEMORY_SCOPE,
+            )
 
         return {
             "session_runs": session_runs,
             "recent_tasks": recent_tasks,
-            "semantic_facts": semantic_facts,
+            "session_facts": session_facts,
+            "profile_facts": profile_facts,
+            "global_facts": global_facts,
+            "semantic_facts": session_facts,
         }
 
     def _search_semantic_facts(
-        self, connection: sqlite3.Connection, topic: str
+        self,
+        connection: sqlite3.Connection,
+        topic: str,
+        *,
+        run_ids: list[str] | None = None,
+        memory_scope: str | None = None,
     ) -> list[dict[str, Any]]:
         """Retrieve the most relevant semantic facts for the current topic."""
 
-        embedding_results = self._search_semantic_facts_by_embedding(connection, topic)
+        embedding_results = self._search_semantic_facts_by_embedding(
+            connection,
+            topic,
+            run_ids=run_ids,
+            memory_scope=memory_scope,
+        )
         if embedding_results:
             return embedding_results
 
@@ -443,17 +724,27 @@ class MemoryService:
             return []
 
         try:
+            where_clauses = ["semantic_facts_fts MATCH ?"]
+            params: list[Any] = [query]
+            if memory_scope:
+                where_clauses.append("sf.memory_scope = ?")
+                params.append(memory_scope)
+            if run_ids:
+                placeholders = ", ".join("?" for _ in run_ids)
+                where_clauses.append(f"sf.run_id IN ({placeholders})")
+                params.extend(run_ids)
             rows = connection.execute(
-                """
-                SELECT sf.fact_id, sf.topic, sf.scope, sf.subject, sf.fact, sf.confidence,
+                f"""
+                SELECT sf.fact_id, sf.run_id, sf.topic, sf.scope, sf.subject, sf.fact, sf.confidence,
+                       sf.stability_score, sf.sensitivity, sf.memory_scope, sf.source_session_id,
                        sf.last_verified_at
                 FROM semantic_facts_fts fts
                 JOIN semantic_facts sf ON sf.fact_id = fts.fact_id
-                WHERE semantic_facts_fts MATCH ?
+                WHERE {" AND ".join(where_clauses)}
                 ORDER BY bm25(semantic_facts_fts), sf.last_verified_at DESC
                 LIMIT 5
                 """,
-                (query,),
+                params,
             ).fetchall()
         except sqlite3.OperationalError:
             return []
@@ -461,18 +752,28 @@ class MemoryService:
         return [
             {
                 "fact_id": row["fact_id"],
+                "run_id": row["run_id"],
                 "topic": row["topic"],
                 "scope": row["scope"],
                 "subject": row["subject"],
                 "fact": row["fact"],
                 "confidence": row["confidence"],
+                "stability_score": row["stability_score"],
+                "sensitivity": row["sensitivity"],
+                "memory_scope": row["memory_scope"],
+                "source_session_id": row["source_session_id"],
                 "last_verified_at": row["last_verified_at"],
             }
             for row in rows
         ]
 
     def _search_semantic_facts_by_embedding(
-        self, connection: sqlite3.Connection, topic: str
+        self,
+        connection: sqlite3.Connection,
+        topic: str,
+        *,
+        run_ids: list[str] | None = None,
+        memory_scope: str | None = None,
     ) -> list[dict[str, Any]]:
         """Retrieve semantic facts by vector similarity when embeddings are available."""
 
@@ -480,12 +781,24 @@ class MemoryService:
         if not query_embedding:
             return []
 
+        where_clauses = ["embedding IS NOT NULL"]
+        params: list[Any] = []
+        if memory_scope:
+            where_clauses.append("memory_scope = ?")
+            params.append(memory_scope)
+        if run_ids:
+            placeholders = ", ".join("?" for _ in run_ids)
+            where_clauses.append(f"run_id IN ({placeholders})")
+            params.extend(run_ids)
+
         rows = connection.execute(
-            """
-            SELECT fact_id, topic, scope, subject, fact, confidence, last_verified_at, embedding
+            f"""
+            SELECT fact_id, run_id, topic, scope, subject, fact, confidence, stability_score,
+                   sensitivity, memory_scope, source_session_id, last_verified_at, embedding
             FROM semantic_facts
-            WHERE embedding IS NOT NULL
-            """
+            WHERE {" AND ".join(where_clauses)}
+            """,
+            params,
         ).fetchall()
 
         scored_rows: list[tuple[float, sqlite3.Row]] = []
@@ -508,11 +821,16 @@ class MemoryService:
         return [
             {
                 "fact_id": row["fact_id"],
+                "run_id": row["run_id"],
                 "topic": row["topic"],
                 "scope": row["scope"],
                 "subject": row["subject"],
                 "fact": row["fact"],
                 "confidence": row["confidence"],
+                "stability_score": row["stability_score"],
+                "sensitivity": row["sensitivity"],
+                "memory_scope": row["memory_scope"],
+                "source_session_id": row["source_session_id"],
                 "last_verified_at": row["last_verified_at"],
                 "similarity": score,
             }
@@ -529,13 +847,68 @@ class MemoryService:
             if not normalized or normalized in deduped:
                 continue
             deduped.append(normalized)
-            if len(deduped) >= 6:
-                break
 
         if not deduped:
             return ""
 
-        return " OR ".join(f'"{token}"' for token in deduped)
+        ranked = sorted(deduped, key=len, reverse=True)[:8]
+        return " OR ".join(f'"{token}"' for token in ranked)
+
+    def _load_profile_candidates(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        limit: int = 12,
+    ) -> list[dict[str, Any]]:
+        """Load recent profile facts for memory query expansion."""
+
+        rows = connection.execute(
+            """
+            SELECT fact_id, subject, fact, confidence, stability_score, sensitivity, source_session_id
+            FROM semantic_facts
+            WHERE memory_scope = ?
+            ORDER BY last_verified_at DESC
+            LIMIT ?
+            """,
+            (PROFILE_MEMORY_SCOPE, limit),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def _build_memory_search_text(
+        self,
+        topic: str,
+        *,
+        profile_candidates: list[dict[str, Any]] | None = None,
+        session_facts: list[dict[str, Any]] | None = None,
+    ) -> str:
+        """Expand recall query with lightweight profile and session-memory hints."""
+
+        pieces: list[str] = [topic.strip()]
+        lowered_topic = topic.lower()
+
+        for item in list(profile_candidates or []) + list(session_facts or []):
+            subject = str(item.get("subject") or "").lower()
+            fact_text = str(item.get("fact") or "").lower()
+            merged = f"{subject} {fact_text}"
+
+            for rule in PROFILE_RULES.values():
+                expansions = tuple(rule.get("expansions") or ())
+                if not expansions:
+                    continue
+                if not any(term.lower() in merged for term in expansions):
+                    continue
+                if any(term.lower() in lowered_topic for term in expansions):
+                    pieces.append(" ".join(expansions))
+                    pieces.append(str(item.get("fact") or "").strip())
+                    break
+
+        deduped: list[str] = []
+        for piece in pieces:
+            normalized = re.sub(r"\s+", " ", piece).strip()
+            if normalized and normalized not in deduped:
+                deduped.append(normalized)
+
+        return " ".join(deduped)
 
     def extract_semantic_facts(self, report: str, topic: str) -> list[dict[str, Any]]:
         """Extract stable semantic facts from the final report."""
@@ -573,12 +946,22 @@ class MemoryService:
             fact_text = str(item.get("fact") or "").strip()
             if not fact_text:
                 continue
+            try:
+                confidence = float(item.get("confidence", 0.0) or 0.0)
+            except (TypeError, ValueError):
+                confidence = 0.0
+            try:
+                stability_score = float(item.get("stability_score", confidence) or confidence)
+            except (TypeError, ValueError):
+                stability_score = confidence
             facts.append(
                 {
                     "scope": str(item.get("scope") or "").strip() or None,
                     "subject": str(item.get("subject") or "").strip() or topic,
                     "fact": fact_text,
-                    "confidence": float(item.get("confidence", 0.0) or 0.0),
+                    "confidence": confidence,
+                    "stability_score": stability_score,
+                    "sensitivity": str(item.get("sensitivity") or "").strip().lower() or None,
                 }
             )
 
@@ -623,25 +1006,81 @@ class MemoryService:
         return numerator / (left_norm * right_norm)
 
     def save_semantic_facts(
-        self, run_id: str, topic: str, facts: list[dict[str, Any]]
+        self,
+        run_id: str,
+        topic: str,
+        facts: list[dict[str, Any]],
+        *,
+        session_id: str | None = None,
     ) -> None:
         """Persist semantic facts and sync the FTS index."""
 
         if not facts:
             return
 
+        resolved_session_id = session_id or self._resolve_session_id_for_run(run_id)
         now = datetime.now(timezone.utc).isoformat()
+        prepared_facts = [
+            self._prepare_semantic_fact(
+                topic,
+                item,
+                session_id=resolved_session_id,
+            )
+            for item in facts
+            if str(item.get("fact") or "").strip()
+        ]
         embedding_inputs = [
             f"{topic}\n{item.get('subject') or ''}\n{item.get('fact') or ''}".strip()
-            for item in facts
+            for item in prepared_facts
         ]
         embeddings = self._embed_texts(embedding_inputs)
         with self._connect() as connection:
-            for idx, item in enumerate(facts):
-                fact_id = uuid4().hex
+            for idx, item in enumerate(prepared_facts):
                 embedding_json = None
                 if idx < len(embeddings):
                     embedding_json = json.dumps(embeddings[idx])
+                existing = self._find_existing_fact(
+                    connection,
+                    fact=item,
+                    session_id=resolved_session_id,
+                )
+                if existing:
+                    connection.execute(
+                        """
+                        UPDATE semantic_facts
+                        SET run_id = ?,
+                            topic = ?,
+                            scope = ?,
+                            subject = ?,
+                            fact = ?,
+                            embedding = COALESCE(?, embedding),
+                            memory_scope = ?,
+                            stability_score = MAX(stability_score, ?),
+                            sensitivity = ?,
+                            source_session_id = COALESCE(source_session_id, ?),
+                            confidence = MAX(confidence, ?),
+                            last_verified_at = ?
+                        WHERE fact_id = ?
+                        """,
+                        (
+                            run_id,
+                            topic,
+                            item.get("scope"),
+                            item.get("subject"),
+                            item.get("fact"),
+                            embedding_json,
+                            item.get("memory_scope"),
+                            float(item.get("stability_score", 0.0) or 0.0),
+                            item.get("sensitivity"),
+                            resolved_session_id,
+                            float(item.get("confidence", 0.0) or 0.0),
+                            now,
+                            existing["fact_id"],
+                        ),
+                    )
+                    continue
+
+                fact_id = uuid4().hex
                 connection.execute(
                     """
                     INSERT INTO semantic_facts (
@@ -652,10 +1091,14 @@ class MemoryService:
                         subject,
                         fact,
                         embedding,
+                        memory_scope,
+                        stability_score,
+                        sensitivity,
+                        source_session_id,
                         confidence,
                         created_at,
                         last_verified_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         fact_id,
@@ -665,6 +1108,10 @@ class MemoryService:
                         item.get("subject"),
                         item.get("fact"),
                         embedding_json,
+                        item.get("memory_scope"),
+                        float(item.get("stability_score", 0.0) or 0.0),
+                        item.get("sensitivity"),
+                        resolved_session_id,
                         float(item.get("confidence", 0.0) or 0.0),
                         now,
                         now,
@@ -696,6 +1143,143 @@ class MemoryService:
         facts = self.extract_semantic_facts(report, topic)
         self.save_semantic_facts(run_id, topic, facts)
         return facts
+
+    def _prepare_semantic_fact(
+        self,
+        topic: str,
+        item: dict[str, Any],
+        *,
+        session_id: str | None,
+    ) -> dict[str, Any]:
+        """Normalize fact metadata and determine its memory scope."""
+
+        fact_text = str(item.get("fact") or "").strip()
+        subject = str(item.get("subject") or "").strip() or topic
+        scope = str(item.get("scope") or "").strip() or None
+        confidence = min(max(float(item.get("confidence", 0.0) or 0.0), 0.0), 1.0)
+        stability_score = min(
+            max(float(item.get("stability_score", confidence) or confidence), 0.0),
+            1.0,
+        )
+        sensitivity = str(item.get("sensitivity") or "").strip().lower()
+        if sensitivity not in {LOW_SENSITIVITY, MEDIUM_SENSITIVITY, HIGH_SENSITIVITY}:
+            sensitivity = self._infer_fact_sensitivity(topic, subject, fact_text)
+
+        memory_scope = str(item.get("memory_scope") or "").strip().lower()
+        if memory_scope not in {SESSION_MEMORY_SCOPE, GLOBAL_MEMORY_SCOPE, PROFILE_MEMORY_SCOPE}:
+            memory_scope = self._classify_memory_scope(
+                topic=topic,
+                subject=subject,
+                fact=fact_text,
+                confidence=confidence,
+                stability_score=stability_score,
+                sensitivity=sensitivity,
+            )
+
+        return {
+            "scope": scope,
+            "subject": subject,
+            "fact": fact_text,
+            "confidence": confidence,
+            "stability_score": stability_score,
+            "sensitivity": sensitivity,
+            "memory_scope": memory_scope,
+            "source_session_id": session_id,
+        }
+
+    def _classify_memory_scope(
+        self,
+        *,
+        topic: str,
+        subject: str,
+        fact: str,
+        confidence: float,
+        stability_score: float,
+        sensitivity: str,
+    ) -> str:
+        """Assign facts to session/global/profile scope using conservative rules."""
+
+        merged = f"{subject} {fact}".lower()
+        if subject.startswith(("goal:", "preference:", "constraint:", "interest:")) or "用户" in fact:
+            return PROFILE_MEMORY_SCOPE
+        if self._is_medical_or_drug_text(topic, merged):
+            return SESSION_MEMORY_SCOPE
+        if (
+            confidence >= GLOBAL_PROMOTION_CONFIDENCE
+            and stability_score >= GLOBAL_PROMOTION_STABILITY
+            and sensitivity == LOW_SENSITIVITY
+        ):
+            return GLOBAL_MEMORY_SCOPE
+        return SESSION_MEMORY_SCOPE
+
+    def _infer_fact_sensitivity(self, topic: str, subject: str, fact: str) -> str:
+        """Infer a conservative sensitivity label for a semantic fact."""
+
+        merged = f"{topic} {subject} {fact}".lower()
+        if self._is_medical_or_drug_text(merged):
+            return HIGH_SENSITIVITY
+        if any(token in merged for token in {"预算", "偏好", "约束", "目标", "用户"}):
+            return MEDIUM_SENSITIVITY
+        return LOW_SENSITIVITY
+
+    def _is_medical_or_drug_text(self, *texts: str) -> bool:
+        """Return whether text belongs to the conservative medical/drug domain."""
+
+        merged = " ".join(texts).lower()
+        return any(token in merged for token in MEDICAL_MEMORY_KEYWORDS)
+
+    def _resolve_session_id_for_run(self, run_id: str) -> str | None:
+        """Look up the session owning a given run."""
+
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT session_id FROM research_runs WHERE run_id = ?",
+                (run_id,),
+            ).fetchone()
+        if not row:
+            return None
+        return str(row["session_id"] or "").strip() or None
+
+    def _find_existing_fact(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        fact: dict[str, Any],
+        session_id: str | None,
+    ) -> sqlite3.Row | None:
+        """Find an existing fact row for minimal deduplication."""
+
+        memory_scope = str(fact.get("memory_scope") or SESSION_MEMORY_SCOPE)
+        subject = str(fact.get("subject") or "").strip()
+        fact_text = str(fact.get("fact") or "").strip()
+        if not fact_text:
+            return None
+
+        if memory_scope == SESSION_MEMORY_SCOPE:
+            return connection.execute(
+                """
+                SELECT fact_id
+                FROM semantic_facts
+                WHERE memory_scope = ?
+                  AND source_session_id = ?
+                  AND COALESCE(subject, '') = ?
+                  AND fact = ?
+                LIMIT 1
+                """,
+                (memory_scope, session_id, subject, fact_text),
+            ).fetchone()
+
+        return connection.execute(
+            """
+            SELECT fact_id
+            FROM semantic_facts
+            WHERE memory_scope = ?
+              AND COALESCE(subject, '') = ?
+              AND fact = ?
+            LIMIT 1
+            """,
+            (memory_scope, subject, fact_text),
+        ).fetchone()
 
     def _extract_json_payload(self, text: str) -> dict[str, Any] | list | None:
         """Best-effort extraction of a JSON object or array from model output."""

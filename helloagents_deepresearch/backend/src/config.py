@@ -27,6 +27,11 @@ class Configuration(BaseModel):
         title="Planner Task Limit",
         description="Maximum number of planner-generated tasks to keep",
     )
+    max_research_rounds: int = Field(
+        default=2,
+        title="Research Rounds",
+        description="Maximum number of planner/reviewer research rounds per run",
+    )
     local_llm: str = Field(
         default="llama3.2",
         title="Local Model Name",
@@ -139,6 +144,7 @@ class Configuration(BaseModel):
             "ollama_base_url": os.getenv("OLLAMA_BASE_URL"),
             "max_web_research_loops": os.getenv("MAX_WEB_RESEARCH_LOOPS"),
             "max_todo_items": os.getenv("MAX_TODO_ITEMS"),
+            "max_research_rounds": os.getenv("MAX_RESEARCH_ROUNDS"),
             "fetch_full_page": os.getenv("FETCH_FULL_PAGE"),
             "strip_thinking_tokens": os.getenv("STRIP_THINKING_TOKENS"),
             "use_tool_calling": os.getenv("USE_TOOL_CALLING"),
