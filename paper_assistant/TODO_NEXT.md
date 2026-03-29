@@ -1,79 +1,61 @@
 # 下一步计划
 
+## 当前决策
+
+- [x] 明确 memory ownership：
+  - [x] Web / Agent 后端是 memory 的主归属层
+  - [x] `paper_assistant/app/memory/*` 不再作为主线继续扩展
+  - [x] 后续多轮对话、研究续写、planner recall、自循环 loop 优先在后端实现
+
 ## 已完成
 
-- [x] 建立 memory v1 基础结构：
-  - [x] `app/memory/models.py`
-  - [x] `app/memory/store.py`
-  - [x] `app/memory/manager.py`
-- [x] 在 `app/config.py` 中增加 `memory_dir`
-- [x] 在 `scripts/query_documents.py` 中接入 `--session-id`
-- [x] 在新仓库中重建 `simple` 索引（643 chunks）
-- [x] 在 `app/llm_client.py` 中新增 `rewrite_question(history, question)`
-- [x] 在 `scripts/query_documents.py` 中将检索问题切换为 `resolved_question`
-- [x] 在回答完成后，将 `question / resolved_question / answer / citation_titles` 写回 working memory
-- [x] 明确第一版 memory 的职责边界：
-  - [x] 当前优先实现 `query rewrite / 上下文补全`
-  - [x] 暂不实现完整 `intent recognition / routing`
-  - [x] 若后续支持问答、总结、对比、报告等多任务入口，再单独引入意图识别层
-- [x] 基础追问验收完成：
-  - [x] “它和微调有什么区别？”
-  - [x] “第二篇论文的方法呢？”已避免乱改写，但仍不能稳定解析“第二篇”的具体指向
-  - [x] “重点讲上一个方法的局限”已避免脑补新实体，但抽象指代解析仍不稳定
+- [x] 建立过 `paper_assistant` memory 原型并完成验证
+  - [x] working memory / research memory 原型已跑通
+  - [x] 基础追问补全曾在 CLI 中验证通过
+  - [x] research note 最小骨架已实现过
+  - [x] 现已确认这层不是后续主线
 
 ## 当前主线
 
-- [x] 拆分 `working_memory.py`
-  - [x] 新建 `app/memory/working_memory.py`
-  - [x] 将 `append_turn / get_recent_turns / has_history / format_history / clear_session` 从 `manager.py` 移入 `WorkingMemory`
-  - [x] 将 `manager.py` 收敛为薄封装，作为后续 `working + research` 的统一入口
-- [x] 验证拆分后 CLI 行为不变
-  - [x] 同一 `session_id` 下追问补全仍可用
-  - [x] `resolved_question` 仍参与检索
-  - [x] 回答后写回 session JSON 仍正常
-- [x] 开始开发 `research_memory.py`
-  - [x] 定义最小 `ResearchNote` 数据结构
-  - [x] 设计 research memory 的存储格式
-  - [x] 明确 `append_note / list_notes / format_notes / clear_notes` 四个最小接口
-  - [x] 将 `MemoryManager` 扩展为 `working + research` 双入口
-- [x] 验证 research memory 最小骨架
-  - [x] `append_note()` 可正常落盘到 `data/memory/research/{session_id}.json`
-  - [x] `format_notes()` 可正常读回并格式化输出
-  - [x] 将 `research_memory` 接到真实问答闭环中
-  - [x] 第一版“高价值结论”规则已落地
-  - [x] 自动写 note 前会先压缩长回答为更短的 `conclusion`
+- [ ] 强化 Web / Agent 后端的 memory 主线
+  - [ ] 明确 `session / run / task / semantic fact` 的职责边界
+  - [ ] 统一前端 `session_id`、后端 session recall、报告续写语义
+  - [ ] 让 planner / summarizer / reporter 使用统一的 recalled context
+  - [ ] 评估并消除后端 memory 与本地工具层 memory 的重复部分
 
-## 下一阶段增强
-
-- [ ] 为 working memory 增加“最近几轮 + query 检索”能力
-  - [x] 新增 `search_relevant_turns(session_id, query, limit)`
-  - [x] 第一版优先采用轻量打分（关键词），不引入新的 embedding 依赖
-  - [x] 在 rewrite 前组合“最近几轮 + 相关历史”
-- [ ] 为 working memory 增加“重要轮次优先”能力
-  - [ ] 区分普通 turn 与高价值 turn
-  - [ ] 为后续 summary / consolidate 做准备
-- [ ] 序号型指代解析
-  - [ ] 利用上一轮 `citation_titles` 做“第一篇 / 第二篇论文”映射
-- [ ] 抽象型指代解析
-  - [ ] 利用上一轮检索结果或回答摘要解析“上一个方法 / 前者 / 后者”
-
-## 后续工作
-
-- [ ] 让后续问题显式读取并使用 `research_memory`
-  - [x] 在 query rewrite 中引入 `format_notes(session_id)`
-  - [ ] 在上下文构建中明确 notes 与 working history 的优先级和去重策略
-- [ ] 做 working / research memory 的 consolidate 规则
-  - [ ] working memory 保持短期、受限
-  - [ ] 高价值结论进入 research memory
-- [ ] 统一 CLI 与 Web 的 session / memory 语义
-  - [ ] Web 请求透传 `session_id`
-  - [ ] 后端入口复用同一套 memory manager
 - [ ] 将网页端从“单次研究任务”升级为“多轮研究对话”
   - [ ] 前端引入稳定的 `session_id`
   - [ ] 同一会话内连续提问不重置上下文
   - [ ] 后端 research 接口接收并透传 `session_id`
   - [ ] 当前研究报告与后续追问共享同一 memory
   - [ ] 明确“开始新对话 / 继续当前对话”的页面交互语义
+
+- [ ] 将当前 workflow 从“规划-执行-总结”升级为“有限轮自循环研究”
+  - [ ] 在 task 内局部 follow-up loop 之外，增加 run 级 reflection
+  - [ ] 对复杂问题支持 `plan -> execute -> reflect -> replan -> execute`
+  - [ ] 增加明确的停止条件，避免无限循环与无效烧 token
+  - [ ] 优先做可控的 2~3 轮 research loop，而不是一步上无限自循环
+
+## 下一阶段增强
+
+- [ ] 用后端 memory 提升 planner recall 质量
+  - [ ] 区分 session runs / recent tasks / semantic facts 的权重
+  - [ ] 限制 planner recall 注入长度，避免 prompt 膨胀
+- [ ] 用后端 memory 支持报告续写与追问
+  - [ ] 明确“继续研究”时如何继承已有报告与任务结果
+  - [ ] 明确“同会话新主题”与“继续同主题”的差异
+- [ ] 用后端 memory 支持更强的反思式 loop
+  - [ ] 让反思阶段利用已有 task memory 判断缺口
+  - [ ] 在补任务前复用已有证据与 semantic facts
+
+## 后续工作
+
+- [ ] 视情况清理或归档 `paper_assistant/app/memory/*`
+  - [ ] 保留为实验代码，或在确认无依赖后移除
+  - [ ] 避免新人误解为主线 memory 所在
+- [ ] 为仓库补一份统一架构文档
+  - [ ] 明确 `helloagents_deepresearch` 与 `paper_assistant` 的职责边界
+  - [ ] 明确 memory 的单一所有权在后端 orchestrator 层
 
 ## chapter14 并行项
 

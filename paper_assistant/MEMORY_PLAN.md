@@ -1,5 +1,9 @@
 # Memory 系统分阶段规划
 
+> 说明：本文件记录的是 `paper_assistant` 层 memory 的设计与实验过程。  
+> 截至 2026-03-29，项目已决定将 memory 的主归属收敛到 `helloagents_deepresearch/backend/src/services/memory.py`。  
+> 因此本文件当前主要作为历史设计记录与实验参考，不再作为后续主线实施文档。
+
 ## 目标
 
 在不推翻当前 `paper_assistant` 文献检索主链路的前提下，为项目补齐一个可演进的 memory 系统，使其从“单轮检索问答”逐步升级为“支持多轮研究对话”的研究助手。
@@ -10,6 +14,11 @@
 - 长期研究记忆在第二阶段引入。
 - memory 只负责上下文连续性与研究沉淀，不替代文献证据。
 - 事实回答仍然必须以 citations / chunk evidence 为准。
+
+当前决策更新：
+- `paper_assistant` memory 原型已完成阶段性验证，但不再继续作为主线推进。
+- 真正服务 Web 多轮研究对话的 memory，将统一放在 `helloagents_deepresearch` 后端。
+- 如后续保留 `paper_assistant/app/memory/*`，定位应为实验性或离线 CLI 参考实现。
 
 ## 当前问题
 
