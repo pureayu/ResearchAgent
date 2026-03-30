@@ -125,6 +125,15 @@
             </p>
           </div>
 
+          <div class="info-item" v-if="currentResponseMode">
+            <label>回答模式</label>
+            <p>
+              <span class="mode-badge" :class="`mode-${currentResponseMode}`">
+                {{ responseModeLabel }}
+              </span>
+            </p>
+          </div>
+
           <div class="info-item" v-if="totalTasks > 0">
             <label>研究进度</label>
             <div class="progress-bar">
@@ -170,13 +179,20 @@
             </span>
           </div>
           <div class="status-controls">
+            <span
+              v-if="currentResponseMode"
+              class="mode-badge status-mode-badge"
+              :class="`mode-${currentResponseMode}`"
+            >
+              {{ responseModeLabel }}
+            </span>
             <button class="secondary-btn" @click="logsCollapsed = !logsCollapsed">
               {{ logsCollapsed ? "展开流程" : "收起流程" }}
             </button>
           </div>
         </header>
 
-        <section class="workflow-stepper">
+        <section v-if="showResearchWorkflow" class="workflow-stepper">
           <article
             v-for="stage in workflowStages"
             :key="stage.key"
@@ -194,6 +210,13 @@
               </div>
             </div>
           </article>
+        </section>
+
+        <section v-else-if="currentResponseMode" class="mode-panel">
+          <span class="mode-badge" :class="`mode-${currentResponseMode}`">
+            {{ responseModeLabel }}
+          </span>
+          <p>{{ responseModeDescription }}</p>
         </section>
 
         <div class="timeline-wrapper" v-show="!logsCollapsed && progressLogs.length">
@@ -227,7 +250,7 @@
               <p class="focus-kicker">当前研究焦点</p>
               <h3>{{ currentTaskTitle }}</h3>
               <p class="muted">
-                第 {{ currentTask.roundId }} 轮 · {{ currentTask.origin === "reviewer" ? "自动补充任务" : "初始规划任务" }}
+                第 {{ currentTask.roundId }} 轮 · {{ currentTaskOriginLabel }}
               </p>
             </div>
             <span class="task-status" :class="currentTask.status">
@@ -255,7 +278,7 @@
           </div>
         </section>
 
-        <div class="tasks-section" v-if="todoTasks.length">
+        <div class="tasks-section" v-if="todoTasks.length && showResearchWorkflow">
           <aside class="tasks-list">
             <div class="tasks-list-header">
               <h3>研究轮次</h3>
@@ -631,6 +654,8 @@ interface TaskRoundView {
   stateLabel: string;
 }
 
+type ResponseMode = "memory_recall" | "direct_answer" | "deep_research";
+
 const SESSION_STORAGE_KEY = "deepresearch_session_id";
 const HISTORY_STORAGE_KEY = "deepresearch_conversation_turns";
 
@@ -646,6 +671,7 @@ const logsCollapsed = ref(false);
 const isExpanded = ref(false);
 const currentSessionId = ref<string | null>(null);
 const currentRunId = ref<string | null>(null);
+const currentResponseMode = ref<ResponseMode | null>(null);
 const conversationTurns = ref<ConversationTurn[]>([]);
 const composerInput = ref("");
 const loadingLabel = ref("研究进行中");
@@ -680,6 +706,19 @@ const TASK_STATUS_LABEL: Record<string, string> = {
 
 function formatTaskStatus(status: string): string {
   return TASK_STATUS_LABEL[status] ?? status;
+}
+
+function formatResponseModeLabel(mode: string | null | undefined): string {
+  if (mode === "memory_recall") {
+    return "会话回忆";
+  }
+  if (mode === "direct_answer") {
+    return "直接回答";
+  }
+  if (mode === "deep_research") {
+    return "深度研究";
+  }
+  return "未分类";
 }
 
 const totalTasks = computed(() => todoTasks.value.length);
@@ -722,6 +761,31 @@ const currentTaskTopScore = computed(
 const currentTaskLatestQuery = computed(
   () => currentTask.value?.latestQuery ?? ""
 );
+const responseModeLabel = computed(() => formatResponseModeLabel(currentResponseMode.value));
+const responseModeDescription = computed(() => {
+  if (currentResponseMode.value === "memory_recall") {
+    return "当前问题会优先基于已有会话历史作答，不触发完整研究流程。";
+  }
+  if (currentResponseMode.value === "direct_answer") {
+    return "当前问题会结合历史目标与上下文直接回答，不触发完整网页研究。";
+  }
+  return "当前问题会进入完整的规划、检索、评审与报告生成流程。";
+});
+const showResearchWorkflow = computed(
+  () => !currentResponseMode.value || currentResponseMode.value === "deep_research"
+);
+const currentTaskOriginLabel = computed(() => {
+  if (currentTask.value?.origin === "reviewer") {
+    return "自动补充任务";
+  }
+  if (currentTask.value?.origin === "direct") {
+    return "直接回答任务";
+  }
+  if (currentTask.value?.origin === "memory") {
+    return "会话回忆任务";
+  }
+  return "初始规划任务";
+});
 const showComparableTopScore = computed(
   () => currentTaskSearchBackend.value === "local_library"
 );
@@ -1033,6 +1097,18 @@ function ensureRecord(value: unknown): Record<string, unknown> {
   return {};
 }
 
+function applyResponseMode(value: unknown): ResponseMode | null {
+  if (
+    value === "memory_recall" ||
+    value === "direct_answer" ||
+    value === "deep_research"
+  ) {
+    currentResponseMode.value = value;
+    return value;
+  }
+  return null;
+}
+
 function applyNoteMetadata(
   task: TodoTaskView,
   payload: Record<string, unknown>
@@ -1087,6 +1163,7 @@ function resetWorkflowState() {
   activeTaskId.value = null;
   reportMarkdown.value = "";
   progressLogs.value = [];
+  currentResponseMode.value = null;
   summaryHighlight.value = false;
   sourcesHighlight.value = false;
   reportHighlight.value = false;
@@ -1124,6 +1201,7 @@ function restoreTurn(turn: ConversationTurn) {
   progressLogs.value = [];
   todoTasks.value = [];
   activeTaskId.value = null;
+  currentResponseMode.value = null;
 }
 
 function findTask(taskId: unknown): TodoTaskView | undefined {
@@ -1262,6 +1340,17 @@ const submitResearch = async (rawTopic: string) => {
     await runResearchStream(
       payload,
       (event: ResearchStreamEvent) => {
+        const payloadRecord = event as Record<string, unknown>;
+        const nextResponseMode = applyResponseMode(payloadRecord.response_mode);
+
+        if (event.type === "response_mode") {
+          if (nextResponseMode) {
+            progressLogs.value.push(`已切换到${formatResponseModeLabel(nextResponseMode)}模式`);
+            loadingLabel.value = formatResponseModeLabel(nextResponseMode);
+          }
+          return;
+        }
+
         if (event.type === "session") {
           const nextSessionId =
             typeof event.session_id === "string" && event.session_id.trim()
@@ -1283,7 +1372,9 @@ const submitResearch = async (rawTopic: string) => {
               ? "已创建新的研究会话"
               : "已连接到当前研究会话"
           );
-          loadingLabel.value = "初始化研究流程";
+          loadingLabel.value = nextResponseMode
+            ? formatResponseModeLabel(nextResponseMode)
+            : "初始化研究流程";
           return;
         }
 
@@ -1295,11 +1386,10 @@ const submitResearch = async (rawTopic: string) => {
           progressLogs.value.push(message);
           loadingLabel.value = message;
 
-          const payload = event as Record<string, unknown>;
-          const task = findTask(payload.task_id);
+          const task = findTask(payloadRecord.task_id);
           if (task && message) {
             task.notices.push(message);
-            applyNoteMetadata(task, payload);
+            applyNoteMetadata(task, payloadRecord);
           }
           return;
         }
@@ -1415,14 +1505,13 @@ const submitResearch = async (rawTopic: string) => {
         }
 
         if (event.type === "task_status") {
-          const payload = event as Record<string, unknown>;
           const task = findTask(event.task_id);
           if (!task) {
             return;
           }
 
-          upsertTaskMetadata(task, payload);
-          applyNoteMetadata(task, payload);
+          upsertTaskMetadata(task, payloadRecord);
+          applyNoteMetadata(task, payloadRecord);
           const status =
             typeof event.status === "string" && event.status.trim()
               ? event.status.trim()
@@ -1459,15 +1548,14 @@ const submitResearch = async (rawTopic: string) => {
         }
 
         if (event.type === "task_stage") {
-          const payload = event as Record<string, unknown>;
-          const task = findTask(payload.task_id);
+          const task = findTask(payloadRecord.task_id);
           if (!task) {
             return;
           }
 
-          upsertTaskMetadata(task, payload);
+          upsertTaskMetadata(task, payloadRecord);
           const stage =
-            typeof payload.stage === "string" ? payload.stage : "unknown";
+            typeof payloadRecord.stage === "string" ? payloadRecord.stage : "unknown";
           const stageLabel =
             stage === "retrieving_local"
               ? "本地检索"
@@ -1475,7 +1563,7 @@ const submitResearch = async (rawTopic: string) => {
               ? "联网检索"
               : stage;
           task.traceEntries.push(
-            buildTraceEntry("task_stage", payload, `进入${stageLabel}`)
+            buildTraceEntry("task_stage", payloadRecord, `进入${stageLabel}`)
           );
           progressLogs.value.push(`${task.title}：进入${stageLabel}`);
           if (activeTaskId.value === task.id) {
@@ -1485,28 +1573,27 @@ const submitResearch = async (rawTopic: string) => {
         }
 
         if (event.type === "query_rewrite") {
-          const payload = event as Record<string, unknown>;
-          const task = findTask(payload.task_id);
+          const task = findTask(payloadRecord.task_id);
           if (!task) {
             return;
           }
 
           const gapReason =
-            typeof payload.gap_reason === "string" ? payload.gap_reason : "";
+            typeof payloadRecord.gap_reason === "string" ? payloadRecord.gap_reason : "";
           const previousQuery =
-            typeof payload.previous_query === "string"
-              ? payload.previous_query
+            typeof payloadRecord.previous_query === "string"
+              ? payloadRecord.previous_query
               : "";
           const rewrittenQuery =
-            typeof payload.rewritten_query === "string"
-              ? payload.rewritten_query
+            typeof payloadRecord.rewritten_query === "string"
+              ? payloadRecord.rewritten_query
               : "";
           task.latestQuery = rewrittenQuery || task.latestQuery;
           task.evidenceGapReason = gapReason || task.evidenceGapReason;
           task.traceEntries.push(
             buildTraceEntry(
               "query_rewrite",
-              payload,
+              payloadRecord,
               "生成 follow-up query",
               `gap=${gapReason || "unknown"}${previousQuery ? ` · from=${previousQuery}` : ""}`
             )
@@ -1519,17 +1606,16 @@ const submitResearch = async (rawTopic: string) => {
         }
 
         if (event.type === "search_result") {
-          const payload = event as Record<string, unknown>;
-          const task = findTask(payload.task_id);
+          const task = findTask(payloadRecord.task_id);
           if (!task) {
             return;
           }
 
-          upsertTaskMetadata(task, payload);
+          upsertTaskMetadata(task, payloadRecord);
           task.traceEntries.push(
             buildTraceEntry(
               "search_result",
-              payload,
+              payloadRecord,
               "检索结果已返回",
               task.evidenceGapReason
                 ? `gap=${task.evidenceGapReason}`
@@ -1546,16 +1632,15 @@ const submitResearch = async (rawTopic: string) => {
         }
 
         if (event.type === "sources") {
-          const payload = event as Record<string, unknown>;
           const task = findTask(event.task_id);
           if (!task) {
             return;
           }
 
           const textCandidates = [
-            payload.latest_sources,
-            payload.sources_summary,
-            payload.raw_context
+            payloadRecord.latest_sources,
+            payloadRecord.sources_summary,
+            payloadRecord.raw_context
           ];
           const latestText = textCandidates
             .map((value) => (typeof value === "string" ? value.trim() : ""))
@@ -1570,19 +1655,18 @@ const submitResearch = async (rawTopic: string) => {
             progressLogs.value.push(`已更新任务来源：${task.title}`);
           }
 
-          if (typeof payload.backend === "string") {
+          if (typeof payloadRecord.backend === "string") {
             progressLogs.value.push(
-              `当前使用搜索后端：${payload.backend}`
+              `当前使用搜索后端：${payloadRecord.backend}`
             );
           }
 
-          applyNoteMetadata(task, payload);
+          applyNoteMetadata(task, payloadRecord);
 
           return;
         }
 
         if (event.type === "task_summary_chunk") {
-          const payload = event as Record<string, unknown>;
           const task = findTask(event.task_id);
           if (!task) {
             return;
@@ -1590,7 +1674,7 @@ const submitResearch = async (rawTopic: string) => {
           const chunk =
             typeof event.content === "string" ? event.content : "";
           task.summary += chunk;
-          applyNoteMetadata(task, payload);
+          applyNoteMetadata(task, payloadRecord);
           if (activeTaskId.value === task.id) {
             pulse(summaryHighlight);
           }
@@ -1598,26 +1682,25 @@ const submitResearch = async (rawTopic: string) => {
         }
 
         if (event.type === "tool_call") {
-          const payload = event as Record<string, unknown>;
           const eventId =
-            typeof payload.event_id === "number"
-              ? payload.event_id
+            typeof payloadRecord.event_id === "number"
+              ? payloadRecord.event_id
               : Date.now();
           const agent =
-            typeof payload.agent === "string" && payload.agent.trim()
-              ? payload.agent.trim()
+            typeof payloadRecord.agent === "string" && payloadRecord.agent.trim()
+              ? payloadRecord.agent.trim()
               : "Agent";
           const tool =
-            typeof payload.tool === "string" && payload.tool.trim()
-              ? payload.tool.trim()
+            typeof payloadRecord.tool === "string" && payloadRecord.tool.trim()
+              ? payloadRecord.tool.trim()
               : "tool";
-          const parameters = ensureRecord(payload.parameters);
+          const parameters = ensureRecord(payloadRecord.parameters);
           const result =
-            typeof payload.result === "string" ? payload.result : "";
-          const noteId = extractOptionalString(payload.note_id);
-          const notePath = extractOptionalString(payload.note_path);
+            typeof payloadRecord.result === "string" ? payloadRecord.result : "";
+          const noteId = extractOptionalString(payloadRecord.note_id);
+          const notePath = extractOptionalString(payloadRecord.note_path);
 
-          const task = findTask(payload.task_id);
+          const task = findTask(payloadRecord.task_id);
           if (task) {
             task.toolCalls.push({
               eventId,
@@ -3387,6 +3470,57 @@ select:focus {
   font-size: 13px !important;
   color: #64748b !important;
   font-weight: 500;
+}
+
+.mode-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 12px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  border: 1px solid transparent;
+}
+
+.mode-memory_recall {
+  background: rgba(14, 165, 233, 0.12);
+  color: #0369a1;
+  border-color: rgba(14, 165, 233, 0.2);
+}
+
+.mode-direct_answer {
+  background: rgba(16, 185, 129, 0.12);
+  color: #047857;
+  border-color: rgba(16, 185, 129, 0.2);
+}
+
+.mode-deep_research {
+  background: rgba(99, 102, 241, 0.12);
+  color: #4338ca;
+  border-color: rgba(99, 102, 241, 0.2);
+}
+
+.status-mode-badge {
+  margin-right: 8px;
+}
+
+.mode-panel {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 18px;
+  background: rgba(255, 255, 255, 0.78);
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 18px;
+  margin-bottom: 20px;
+}
+
+.mode-panel p {
+  margin: 0;
+  color: #475569;
+  line-height: 1.6;
 }
 
 .sidebar-actions {

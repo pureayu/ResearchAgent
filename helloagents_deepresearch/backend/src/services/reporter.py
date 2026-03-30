@@ -9,7 +9,7 @@ from hello_agents import ToolAwareSimpleAgent
 from models import SummaryState
 from config import Configuration
 from utils import strip_thinking_tokens
-from services.text_processing import strip_tool_calls
+from services.text_processing import clean_task_summary, dedupe_markdown_blocks, strip_tool_calls
 
 
 class ReportingService:
@@ -24,7 +24,7 @@ class ReportingService:
 
         tasks_block = []
         for task in state.todo_items:
-            summary_block = task.summary or "暂无可用信息"
+            summary_block = clean_task_summary(task.summary or "") or "暂无可用信息"
             sources_block = task.sources_summary or "暂无来源"
             tasks_block.append(
                 f"### 任务 {task.id}: {task.title}\n"
@@ -83,6 +83,7 @@ class ReportingService:
             report_text = strip_thinking_tokens(report_text)
 
         report_text = strip_tool_calls(report_text).strip()
+        report_text = dedupe_markdown_blocks(report_text)
         report_text = self._append_authoritative_appendix(
             report_text,
             authoritative_status_section=authoritative_status_section,

@@ -14,6 +14,7 @@ from hello_agents.tools.builtin.note_tool import NoteTool
 
 from config import Configuration
 from prompts import (
+    direct_answer_system_prompt,
     research_reviewer_system_prompt,
     report_writer_instructions,
     task_summarizer_instructions,
@@ -24,9 +25,11 @@ from services.planner import PlanningService
 from services.reporter import ReportingService
 from services.search import dispatch_search, prepare_research_context
 from services.summarizer import SummarizationService
+from services.text_processing import dedupe_markdown_blocks, strip_tool_calls
 from services.tool_events import ToolCallTracker
 from services.memory import MemoryService
 from services.reviewer import ReviewerService
+from utils import strip_thinking_tokens
 
 logger = logging.getLogger(__name__)
 LOCAL_LIBRARY_BACKEND = "local_library"
@@ -84,6 +87,40 @@ MEMORY_QUERY_STOPWORDS = {
     "那个",
     "内容",
 }
+RESPONSE_MODE_MEMORY_RECALL = "memory_recall"
+RESPONSE_MODE_DIRECT_ANSWER = "direct_answer"
+RESPONSE_MODE_DEEP_RESEARCH = "deep_research"
+DIRECT_ANSWER_PATTERNS = (
+    r"适合吗",
+    r"能不能",
+    r"可以吗",
+    r"可不可以",
+    r"要不要",
+    r"该不该",
+    r"行不行",
+    r"值不值得",
+    r"热量(如何|怎么样|高吗|低吗)?",
+    r"会不会",
+    r"喝.*吗",
+    r"吃.*吗",
+)
+DEEP_RESEARCH_PATTERNS = (
+    r"分别",
+    r"对比",
+    r"比较",
+    r"系统",
+    r"全面",
+    r"详细",
+    r"展开",
+    r"综述",
+    r"研究",
+    r"量化",
+    r"频率",
+    r"预算",
+    r"策略",
+    r"路线",
+    r"并给出",
+)
 
 
 class DeepResearchAgent:
@@ -123,6 +160,11 @@ class DeepResearchAgent:
         self.review_agent = self._create_tool_aware_agent(
             name="研究评审专家",
             system_prompt=research_reviewer_system_prompt.strip(),
+        )
+        self.direct_answer_agent = self._create_tool_aware_agent(
+            name="个性化直接回答专家",
+            system_prompt=direct_answer_system_prompt.strip(),
+            use_tools=False,
         )
 
         self._summarizer_factory: Callable[[], ToolAwareSimpleAgent] = lambda: self._create_tool_aware_agent(  # noqa: E501
@@ -169,15 +211,21 @@ class DeepResearchAgent:
 
         return HelloAgentsLLM(**llm_kwargs)
 
-    def _create_tool_aware_agent(self, *, name: str, system_prompt: str) -> ToolAwareSimpleAgent:
+    def _create_tool_aware_agent(
+        self,
+        *,
+        name: str,
+        system_prompt: str,
+        use_tools: bool = True,
+    ) -> ToolAwareSimpleAgent:
         """Instantiate a ToolAwareSimpleAgent sharing tool registry and tracker."""
         return ToolAwareSimpleAgent(
             name=name,
             llm=self.llm,
             system_prompt=system_prompt,
-            enable_tool_calling=self.tools_registry is not None,
-            tool_registry=self.tools_registry,
-            tool_call_listener=self._tool_tracker.record,
+            enable_tool_calling=use_tools and self.tools_registry is not None,
+            tool_registry=self.tools_registry if use_tools else None,
+            tool_call_listener=self._tool_tracker.record if use_tools else None,
         )
 
     def _set_tool_event_sink(self, sink: Callable[[dict[str, Any]], None] | None) -> None:
@@ -197,13 +245,14 @@ class DeepResearchAgent:
             topic,
             exclude_run_id=state.run_id,
         )
-        memory_only_mode = self._looks_like_memory_recall_query(topic) and self._has_recallable_history(
-            state.recalled_context
-        )
+        state.response_mode = self._classify_response_mode(topic, state.recalled_context)
 
-        if memory_only_mode:
+        if state.response_mode == RESPONSE_MODE_MEMORY_RECALL:
             state.todo_items = [self._build_memory_recall_task(state)]
             self._initialize_round_metadata(state.todo_items, round_id=1, origin="memory")
+        elif state.response_mode == RESPONSE_MODE_DIRECT_ANSWER:
+            state.todo_items = [self._build_direct_answer_task(state)]
+            self._initialize_round_metadata(state.todo_items, round_id=1, origin="direct")
         else:
             #分解任务
             state.todo_items = self.planner.plan_todo_list(state)
@@ -214,7 +263,11 @@ class DeepResearchAgent:
                 state.todo_items = [self.planner.create_fallback_task(state)]
             self._initialize_round_metadata(state.todo_items, round_id=1, origin="planner")
 
-        max_rounds = 1 if memory_only_mode else max(1, int(self.config.max_research_rounds))
+        max_rounds = (
+            1
+            if state.response_mode != RESPONSE_MODE_DEEP_RESEARCH
+            else max(1, int(self.config.max_research_rounds))
+        )
         current_round = 1
 
         while current_round <= max_rounds:
@@ -243,13 +296,17 @@ class DeepResearchAgent:
 
             current_round += 1
 
-        report = self.reporting.generate_report(state)
-        self._drain_tool_events(state)
+        if state.response_mode == RESPONSE_MODE_DEEP_RESEARCH:
+            report = self.reporting.generate_report(state)
+            self._drain_tool_events(state)
+        else:
+            report = self._build_single_task_report(state)
         state.structured_report = report
         state.running_summary = report
         self._persist_final_report(state, report)
         self.memory_service.save_report_memory(state.run_id, state, report)
-        self.memory_service.consolidate_semantic_facts(state.run_id, topic, report)
+        if state.response_mode == RESPONSE_MODE_DEEP_RESEARCH:
+            self.memory_service.consolidate_semantic_facts(state.run_id, topic, report)
         return SummaryStateOutput(
             session_id=state.session_id,
             running_summary=report,
@@ -268,25 +325,31 @@ class DeepResearchAgent:
             topic,
             exclude_run_id=state.run_id,
         )
-        memory_only_mode = self._looks_like_memory_recall_query(topic) and self._has_recallable_history(
-            state.recalled_context
-        )
+        state.response_mode = self._classify_response_mode(topic, state.recalled_context)
         yield {
             "type": "session",
             "session_id": state.session_id,
             "run_id": state.run_id,
+            "response_mode": state.response_mode,
+        }
+        yield {
+            "type": "response_mode",
+            "response_mode": state.response_mode,
+            "label": self._response_mode_label(state.response_mode),
         }
         logger.debug("Starting streaming research: topic=%s", topic)
         yield {
             "type": "status",
-            "message": "检测到历史回忆型问题，优先检索会话记忆"
-            if memory_only_mode
-            else "初始化研究流程",
+            "message": self._initial_status_message(state.response_mode),
+            "response_mode": state.response_mode,
         }
 
-        if memory_only_mode:
+        if state.response_mode == RESPONSE_MODE_MEMORY_RECALL:
             state.todo_items = [self._build_memory_recall_task(state)]
             self._initialize_round_metadata(state.todo_items, round_id=1, origin="memory")
+        elif state.response_mode == RESPONSE_MODE_DIRECT_ANSWER:
+            state.todo_items = [self._build_direct_answer_task(state)]
+            self._initialize_round_metadata(state.todo_items, round_id=1, origin="direct")
         else:
             state.todo_items = self.planner.plan_todo_list(state)
             for event in self._drain_tool_events(state, step=0):
@@ -299,9 +362,14 @@ class DeepResearchAgent:
             "type": "todo_list",
             "tasks": [self._serialize_task(t) for t in state.todo_items],
             "step": 0,
+            "response_mode": state.response_mode,
         }
 
-        max_rounds = 1 if memory_only_mode else max(1, int(self.config.max_research_rounds))
+        max_rounds = (
+            1
+            if state.response_mode != RESPONSE_MODE_DEEP_RESEARCH
+            else max(1, int(self.config.max_research_rounds))
+        )
         current_round = 1
         step_counter = 1
 
@@ -312,7 +380,14 @@ class DeepResearchAgent:
 
             yield {
                 "type": "status",
-                "message": f"开始第 {current_round} 轮研究",
+                "message": (
+                    f"开始第 {current_round} 轮研究"
+                    if state.response_mode == RESPONSE_MODE_DEEP_RESEARCH
+                    else "正在结合已召回上下文生成回答"
+                    if state.response_mode == RESPONSE_MODE_DIRECT_ANSWER
+                    else "正在整理当前会话中的相关历史记录"
+                ),
+                "response_mode": state.response_mode,
             }
 
             for task in pending_tasks:
@@ -336,9 +411,10 @@ class DeepResearchAgent:
                     "step": step,
                     "stream_token": task.stream_token,
                     "round_id": task.round_id,
-                    "origin": task.origin,
-                    "parent_task_id": task.parent_task_id,
-                }
+                        "origin": task.origin,
+                        "parent_task_id": task.parent_task_id,
+                        "response_mode": state.response_mode,
+                    }
 
                 try:
                     for event in self._execute_task(state, task, emit_stream=True, step=step):
@@ -362,6 +438,7 @@ class DeepResearchAgent:
                         "note_path": task.note_path,
                         "step": step,
                         "stream_token": task.stream_token,
+                        "response_mode": state.response_mode,
                     }
 
             if current_round >= max_rounds:
@@ -370,12 +447,14 @@ class DeepResearchAgent:
             yield {
                 "type": "status",
                 "message": f"第 {current_round} 轮任务完成，正在评估研究覆盖度",
+                "response_mode": state.response_mode,
             }
             review = self.reviewer.review_progress(state, current_round)
             if review.is_sufficient or not review.followup_tasks:
                 yield {
                     "type": "status",
                     "message": "当前研究已覆盖核心问题，准备生成最终报告",
+                    "response_mode": state.response_mode,
                 }
                 break
 
@@ -388,38 +467,51 @@ class DeepResearchAgent:
                 yield {
                     "type": "status",
                     "message": "未生成有效追加任务，准备生成最终报告",
+                    "response_mode": state.response_mode,
                 }
                 break
 
             yield {
                 "type": "status",
                 "message": f"发现研究缺口：{review.overall_gap or '需要补充证据'}，已追加 {len(appended_tasks)} 个任务",
+                "response_mode": state.response_mode,
             }
             yield {
                 "type": "todo_list",
                 "tasks": [self._serialize_task(t) for t in state.todo_items],
                 "step": 0,
+                "response_mode": state.response_mode,
             }
             current_round += 1
 
         yield {
             "type": "status",
-            "message": "任务执行完成，正在生成最终报告",
+            "message": (
+                "任务执行完成，正在生成最终报告"
+                if state.response_mode == RESPONSE_MODE_DEEP_RESEARCH
+                else "回答已生成，正在整理最终输出"
+            ),
+            "response_mode": state.response_mode,
         }
-        report = self.reporting.generate_report(state)
-        final_step = step_counter
-        for event in self._drain_tool_events(state, step=final_step):
-            yield event
+        if state.response_mode == RESPONSE_MODE_DEEP_RESEARCH:
+            report = self.reporting.generate_report(state)
+            final_step = step_counter
+            for event in self._drain_tool_events(state, step=final_step):
+                yield event
+        else:
+            report = self._build_single_task_report(state)
         state.structured_report = report
         state.running_summary = report
 
         note_event = self._persist_final_report(state, report)
         self.memory_service.save_report_memory(state.run_id, state, report)
-        yield {
-            "type": "status",
-            "message": "最终报告已生成，正在沉淀语义记忆",
-        }
-        self.memory_service.consolidate_semantic_facts(state.run_id, topic, report)
+        if state.response_mode == RESPONSE_MODE_DEEP_RESEARCH:
+            yield {
+                "type": "status",
+                "message": "最终报告已生成，正在沉淀语义记忆",
+                "response_mode": state.response_mode,
+            }
+            self.memory_service.consolidate_semantic_facts(state.run_id, topic, report)
         if note_event:
             yield note_event
 
@@ -428,6 +520,7 @@ class DeepResearchAgent:
             "report": report,
             "note_id": state.report_note_id,
             "note_path": state.report_note_path,
+            "response_mode": state.response_mode,
         }
         yield {"type": "done"}
 
@@ -446,6 +539,15 @@ class DeepResearchAgent:
         task.status = "in_progress"
         if task.origin == "memory":
             for event in self._execute_memory_recall_task(
+                state,
+                task,
+                emit_stream=emit_stream,
+                step=step,
+            ):
+                yield event
+            return
+        if task.origin == "direct":
+            for event in self._execute_direct_answer_task(
                 state,
                 task,
                 emit_stream=emit_stream,
@@ -612,6 +714,7 @@ class DeepResearchAgent:
                     "latest_query": task.latest_query,
                     "evidence_gap_reason": task.evidence_gap_reason,
                     "step": step,
+                    "response_mode": state.response_mode,
                     **self._summarize_search_result(search_result),
                 }
             else:
@@ -649,6 +752,7 @@ class DeepResearchAgent:
                 "evidence_gap_reason": task.evidence_gap_reason,
                 "note_id": task.note_id,
                 "note_path": task.note_path,
+                "response_mode": state.response_mode,
                 **self._summarize_search_result(search_result),
             }
 
@@ -700,6 +804,7 @@ class DeepResearchAgent:
                 "latest_query": task.latest_query,
                 "evidence_gap_reason": task.evidence_gap_reason,
                 "step": step,
+                "response_mode": state.response_mode,
                 **self._summarize_search_result(search_result),
             }
         else:
@@ -754,6 +859,7 @@ class DeepResearchAgent:
                 "evidence_gap_reason": task.evidence_gap_reason,
                 "note_id": task.note_id,
                 "note_path": task.note_path,
+                "response_mode": state.response_mode,
             }
             yield {
                 "type": "task_status",
@@ -771,6 +877,7 @@ class DeepResearchAgent:
                 "latest_query": task.latest_query,
                 "evidence_gap_reason": task.evidence_gap_reason,
                 "step": step,
+                "response_mode": state.response_mode,
             }
 
     def _looks_like_memory_recall_query(self, topic: str) -> bool:
@@ -780,6 +887,53 @@ class DeepResearchAgent:
         if not normalized:
             return False
         return any(re.search(pattern, normalized) for pattern in MEMORY_RECALL_PATTERNS)
+
+    def _classify_response_mode(
+        self,
+        topic: str,
+        recalled_context: dict[str, Any] | None,
+    ) -> str:
+        """Route the current query to memory recall, direct answer, or deep research."""
+
+        if self._looks_like_memory_recall_query(topic):
+            return RESPONSE_MODE_MEMORY_RECALL
+        if self._looks_like_direct_answer_query(topic, recalled_context):
+            return RESPONSE_MODE_DIRECT_ANSWER
+        return RESPONSE_MODE_DEEP_RESEARCH
+
+    def _looks_like_direct_answer_query(
+        self,
+        topic: str,
+        recalled_context: dict[str, Any] | None,
+    ) -> bool:
+        """Detect short, personal, decision-oriented questions suitable for direct answers."""
+
+        normalized = re.sub(r"\s+", " ", (topic or "").strip().lower())
+        if not normalized:
+            return False
+        if len(normalized) > 80:
+            return False
+        if sum(normalized.count(token) for token in ("，", "、", ";", "；")) > 1:
+            return False
+        if any(re.search(pattern, normalized) for pattern in DEEP_RESEARCH_PATTERNS):
+            return False
+        if not any(re.search(pattern, normalized) for pattern in DIRECT_ANSWER_PATTERNS):
+            has_personal_frame = any(token in normalized for token in ("我", "现在", "今天", "最近"))
+            has_decision_or_advice = any(
+                token in normalized
+                for token in ("适合", "能不能", "可以", "要不要", "该不该", "热量", "高吗", "低吗")
+            )
+            if not (has_personal_frame and has_decision_or_advice):
+                return False
+
+        if not recalled_context:
+            return False
+        return bool(
+            (recalled_context.get("profile_facts") or [])
+            or (recalled_context.get("session_facts") or recalled_context.get("semantic_facts") or [])
+            or (recalled_context.get("session_runs") or [])
+            or (recalled_context.get("recent_tasks") or [])
+        )
 
     def _has_recallable_history(self, recalled_context: dict[str, Any] | None) -> bool:
         """Return whether current session has enough history to answer from memory."""
@@ -801,6 +955,17 @@ class DeepResearchAgent:
             intent="基于当前会话历史回答用户是否曾讨论过相关主题，并提炼已有结论",
             query=state.research_topic,
             origin="memory",
+        )
+
+    def _build_direct_answer_task(self, state: SummaryState) -> TodoItem:
+        """Create a synthetic task for short, context-aware direct answers."""
+
+        return TodoItem(
+            id=1,
+            title="个性化直接回答",
+            intent="结合当前问题与已召回的长期目标、偏好和会话上下文，给出简洁明确的回答",
+            query=state.research_topic,
+            origin="direct",
         )
 
     def _build_memory_recall_answer(
@@ -950,6 +1115,236 @@ class DeepResearchAgent:
         sources_summary = "\n".join(source_lines).strip()
         evidence_count = len(relevant_runs[:3]) + len(relevant_facts[:5])
         return summary, sources_summary, evidence_count
+
+    def _execute_direct_answer_task(
+        self,
+        state: SummaryState,
+        task: TodoItem,
+        *,
+        emit_stream: bool,
+        step: int | None,
+    ) -> Iterator[dict[str, Any]]:
+        """Answer short personal questions directly from recalled context."""
+
+        task.latest_query = task.query
+        task.search_backend = "direct_answer"
+        task.attempt_count = 1
+        task.needs_followup = False
+        task.evidence_gap_reason = None
+
+        summary, sources_summary, evidence_count = self._build_direct_answer_output(
+            state,
+            task.query,
+        )
+        task.summary = summary
+        task.sources_summary = sources_summary
+        task.evidence_count = evidence_count
+        task.top_score = 1.0 if evidence_count else 0.0
+        task.notices = ["本任务直接基于已召回的长期目标、偏好与会话上下文生成，未进行联网搜索。"]
+        task.status = "completed"
+
+        self.memory_service.save_task_memory(state.run_id, task)
+        with self._state_lock:
+            state.web_research_results.append(summary)
+            state.sources_gathered.append(sources_summary)
+            state.research_loop_count += 1
+
+        if emit_stream:
+            yield {
+                "type": "sources",
+                "task_id": task.id,
+                "latest_sources": sources_summary,
+                "raw_context": summary,
+                "step": step,
+                "backend": task.search_backend,
+                "attempt_count": task.attempt_count,
+                "evidence_count": task.evidence_count,
+                "top_score": task.top_score,
+                "needs_followup": task.needs_followup,
+                "latest_query": task.latest_query,
+                "evidence_gap_reason": task.evidence_gap_reason,
+                "note_id": task.note_id,
+                "note_path": task.note_path,
+                "response_mode": state.response_mode,
+            }
+            yield {
+                "type": "task_status",
+                "task_id": task.id,
+                "status": "completed",
+                "summary": task.summary,
+                "sources_summary": task.sources_summary,
+                "note_id": task.note_id,
+                "note_path": task.note_path,
+                "attempt_count": task.attempt_count,
+                "search_backend": task.search_backend,
+                "evidence_count": task.evidence_count,
+                "top_score": task.top_score,
+                "needs_followup": task.needs_followup,
+                "latest_query": task.latest_query,
+                "evidence_gap_reason": task.evidence_gap_reason,
+                "step": step,
+                "response_mode": state.response_mode,
+            }
+
+    def _build_direct_answer_output(
+        self,
+        state: SummaryState,
+        query: str,
+    ) -> tuple[str, str, int]:
+        """Generate a concise answer grounded in recalled context."""
+
+        prompt = self._build_direct_answer_prompt(state, query)
+        try:
+            response = self.direct_answer_agent.run(prompt)
+        finally:
+            self.direct_answer_agent.clear_history()
+
+        answer_text = response.strip()
+        if self.config.strip_thinking_tokens:
+            answer_text = strip_thinking_tokens(answer_text)
+        answer_text = strip_tool_calls(answer_text).strip()
+        answer_text = dedupe_markdown_blocks(answer_text)
+
+        if not answer_text:
+            answer_text = (
+                "基于当前召回到的上下文，我暂时无法给出足够可靠的直接判断。\n\n"
+                "- 你可以补充品牌、杯型、糖度或你当前所处的目标阶段，我再给你更具体的建议。"
+            )
+
+        sources_summary, evidence_count = self._build_direct_answer_sources(state)
+        return answer_text, sources_summary, evidence_count
+
+    def _build_direct_answer_prompt(self, state: SummaryState, query: str) -> str:
+        """Build the input for the direct-answer agent."""
+
+        recalled = state.recalled_context or {}
+
+        def format_lines(items: list[Any], formatter: Callable[[Any], str], fallback: str) -> str:
+            lines = [formatter(item) for item in items if formatter(item)]
+            return "\n".join(lines[:5]) if lines else fallback
+
+        profile_block = format_lines(
+            list(recalled.get("profile_facts") or []),
+            lambda item: f"- {str(item.get('fact') or '').strip()}",
+            "- 暂无命中的长期目标/偏好/约束",
+        )
+        session_fact_block = format_lines(
+            list(recalled.get("session_facts") or recalled.get("semantic_facts") or []),
+            lambda item: f"- {str(item.get('fact') or '').strip()}",
+            "- 暂无当前会话语义结论",
+        )
+        recent_task_block = format_lines(
+            list(recalled.get("recent_tasks") or []),
+            lambda item: (
+                f"- {str(item.get('title') or '').strip()}："
+                f"{str(item.get('summary') or '').strip()[:160]}"
+            ),
+            "- 暂无相关历史任务",
+        )
+        session_run_block = format_lines(
+            list(recalled.get("session_runs") or []),
+            lambda item: (
+                f"- {str(item.get('topic') or '').strip()}："
+                f"{str(item.get('report_excerpt') or '').strip()[:180]}"
+            ),
+            "- 暂无相关历史研究",
+        )
+
+        has_context = any(
+            recalled.get(key)
+            for key in ("profile_facts", "session_facts", "semantic_facts", "recent_tasks", "session_runs")
+        )
+
+        return (
+            f"当前问题：{query}\n"
+            f"是否命中历史上下文：{'是' if has_context else '否'}\n\n"
+            "请直接回答用户，不要把自己写成研究报告。\n\n"
+            f"长期目标/偏好/约束：\n{profile_block}\n\n"
+            f"当前会话语义记忆：\n{session_fact_block}\n\n"
+            f"最近相关任务：\n{recent_task_block}\n\n"
+            f"最近相关研究：\n{session_run_block}\n"
+        )
+
+    def _build_direct_answer_sources(self, state: SummaryState) -> tuple[str, int]:
+        """Summarize which recalled memory blocks informed the direct answer."""
+
+        recalled = state.recalled_context or {}
+        source_lines: list[str] = []
+        evidence_count = 0
+
+        for idx, item in enumerate(recalled.get("profile_facts") or [], start=1):
+            fact = str(item.get("fact") or "").strip()
+            if not fact:
+                continue
+            source_lines.extend(
+                [
+                    f"Source: Profile Memory {idx}",
+                    f"信息内容: {fact}",
+                ]
+            )
+            evidence_count += 1
+
+        for idx, item in enumerate(recalled.get("session_facts") or recalled.get("semantic_facts") or [], start=1):
+            fact = str(item.get("fact") or "").strip()
+            if not fact:
+                continue
+            source_lines.extend(
+                [
+                    f"Source: Session Semantic {idx}",
+                    f"信息内容: {fact}",
+                ]
+            )
+            evidence_count += 1
+
+        for idx, item in enumerate(recalled.get("recent_tasks") or [], start=1):
+            title = str(item.get("title") or "").strip()
+            summary = str(item.get("summary") or "").strip()
+            if not (title or summary):
+                continue
+            source_lines.extend(
+                [
+                    f"Source: Recent Task {idx}",
+                    f"信息内容: {title} {summary[:180]}".strip(),
+                ]
+            )
+            evidence_count += 1
+
+        for idx, item in enumerate(recalled.get("session_runs") or [], start=1):
+            topic = str(item.get("topic") or "").strip()
+            excerpt = str(item.get("report_excerpt") or "").strip()
+            if not (topic or excerpt):
+                continue
+            source_lines.extend(
+                [
+                    f"Source: Session Run {idx}",
+                    f"信息内容: {topic} {excerpt[:180]}".strip(),
+                ]
+            )
+            evidence_count += 1
+
+        return "\n".join(source_lines).strip(), evidence_count
+
+    def _build_single_task_report(self, state: SummaryState) -> str:
+        """Reuse the single synthetic task as the final output for non-research modes."""
+
+        if not state.todo_items:
+            return "暂无可用信息"
+        return state.todo_items[0].summary or "暂无可用信息"
+
+    @staticmethod
+    def _response_mode_label(response_mode: str) -> str:
+        if response_mode == RESPONSE_MODE_MEMORY_RECALL:
+            return "会话回忆"
+        if response_mode == RESPONSE_MODE_DIRECT_ANSWER:
+            return "直接回答"
+        return "深度研究"
+
+    def _initial_status_message(self, response_mode: str) -> str:
+        if response_mode == RESPONSE_MODE_MEMORY_RECALL:
+            return "检测到历史回忆型问题，优先检索会话记忆"
+        if response_mode == RESPONSE_MODE_DIRECT_ANSWER:
+            return "检测到可直接回答的问题，正在结合历史上下文生成个性化短答"
+        return "初始化研究流程"
 
     def _extract_memory_terms(self, query: str) -> set[str]:
         """Extract coarse-grained semantic terms for memory matching."""

@@ -11,7 +11,7 @@ from models import SummaryState, TodoItem
 from config import Configuration
 from utils import strip_thinking_tokens
 from services.notes import build_note_guidance
-from services.text_processing import strip_tool_calls
+from services.text_processing import clean_task_summary, strip_tool_calls
 
 
 class SummarizationService:
@@ -40,7 +40,7 @@ class SummarizationService:
         if self._config.strip_thinking_tokens:
             summary_text = strip_thinking_tokens(summary_text)
 
-        summary_text = strip_tool_calls(summary_text).strip()
+        summary_text = clean_task_summary(strip_tool_calls(summary_text).strip())
 
         return summary_text or "暂无可用信息"
 
@@ -107,7 +107,7 @@ class SummarizationService:
             else:
                 cleaned = visible_output
 
-            return strip_tool_calls(cleaned).strip()
+            return clean_task_summary(strip_tool_calls(cleaned).strip())
 
         return generator(), get_summary
 
@@ -121,5 +121,5 @@ class SummarizationService:
             f"检索查询：{task.query}\n"
             f"任务上下文：\n{context}\n"
             f"{build_note_guidance(task)}\n"
-            "请按照以上协作要求先同步笔记，然后返回一份面向用户的 Markdown 总结（仍遵循任务总结模板）。"
+            "请按照以上协作要求先同步笔记，然后返回一份面向用户的 Markdown 摘要：先给结论，再列关键要点，不要输出固定标题“任务总结”。"
         )
