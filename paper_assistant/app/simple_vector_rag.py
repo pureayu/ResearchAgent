@@ -2,7 +2,7 @@ import math
 from collections import Counter
 from pathlib import Path
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.citation_retriever import (
     _build_snippet,
@@ -13,6 +13,7 @@ from app.config import Settings
 from app.embedding_client import EmbeddingClient
 from app.metadata_store import MetadataStore
 from app.models import Citation, DocumentRecord, ProcessedDocument
+from app.pgvector_chunk_store import PGVectorChunkStore
 from app.utils import dump_json, load_json
 
 BM25_STOPWORDS = {
@@ -93,7 +94,7 @@ class IndexedChunk(BaseModel):
     filepath: str
     page: int | None = None
     text: str
-    embedding: list[float]
+    embedding: list[float] = Field(default_factory=list)
 
 
 class RetrievalCandidate(BaseModel):
@@ -112,9 +113,29 @@ class SimpleVectorRAG:
         self.store = MetadataStore(settings.metadata_file, settings.manifest_file)
         self.embedding_client = EmbeddingClient(settings)
         self.index_file = settings.simple_index_file
+        self.backend = settings.resolved_rag_vector_backend()
+        self.chunk_store = (
+            PGVectorChunkStore(settings)
+            if self.backend == "postgres"
+            else None
+        )
 
     def build_index(self, documents: list[DocumentRecord], rebuild: bool = False) -> int:
-        existing = {} if rebuild else {item.chunk_uid: item for item in self._load_index()}
+        if self.chunk_store is not None and rebuild:
+            self.chunk_store.reset()
+
+        if rebuild:
+            existing_chunk_uids: set[str] = set()
+            existing_records: dict[str, IndexedChunk] = {}
+        elif self.chunk_store is not None:
+            existing_chunk_uids = self.chunk_store.load_existing_chunk_uids()
+            existing_records = {}
+        else:
+            existing_records = {
+                item.chunk_uid: item
+                for item in self._load_index(include_embeddings=True)
+            }
+            existing_chunk_uids = set(existing_records)
         new_records: list[IndexedChunk] = []
 
         for document in documents:
@@ -128,7 +149,7 @@ class SimpleVectorRAG:
             processed = ProcessedDocument.model_validate(processed_payload)
             for chunk in processed.chunks:
                 chunk_uid = f"{processed.id}:{chunk.chunk_id}"
-                if chunk_uid in existing:
+                if chunk_uid in existing_chunk_uids:
                     continue
                 new_records.append(
                     IndexedChunk(
@@ -140,20 +161,26 @@ class SimpleVectorRAG:
                         filepath=document.filepath,
                         page=chunk.page,
                         text=chunk.text,
-                        embedding=[],
                     )
                 )
 
         if not new_records:
+            if rebuild and self.chunk_store is None:
+                dump_json(self.index_file, [])
             return 0
 
         embeddings = self.embedding_client.embed_texts([item.text for item in new_records])
         for record, embedding in zip(new_records, embeddings, strict=True):
             record.embedding = embedding
-            existing[record.chunk_uid] = record
+            existing_records[record.chunk_uid] = record
 
-        all_records = sorted(existing.values(), key=lambda item: item.chunk_uid)
-        dump_json(self.index_file, [item.model_dump(mode="json") for item in all_records])
+        if self.chunk_store is not None:
+            self.chunk_store.upsert_chunks(
+                [item.model_dump(mode="json") for item in new_records]
+            )
+        else:
+            all_records = sorted(existing_records.values(), key=lambda item: item.chunk_uid)
+            dump_json(self.index_file, [item.model_dump(mode="json") for item in all_records])
         return len(new_records)
 
     def query(
@@ -163,7 +190,8 @@ class SimpleVectorRAG:
         candidate_k: int = 20,
         retrieval_mode: str = "hybrid",
     ) -> list[Citation]:
-        records = self._load_index()
+        needs_embeddings = self.chunk_store is None and retrieval_mode in {"vector", "hybrid"}
+        records = self._load_index(include_embeddings=needs_embeddings)
         if not records:
             return []
 
@@ -261,9 +289,29 @@ class SimpleVectorRAG:
             for item in diversified[:top_k]
         ]
 
-    def _load_index(self) -> list[IndexedChunk]:
+    def _load_index(
+        self,
+        *,
+        include_embeddings: bool,
+        doc_ids: list[str] | None = None,
+    ) -> list[IndexedChunk]:
+        if self.chunk_store is not None:
+            payload = self.chunk_store.load_chunks(
+                include_embeddings=include_embeddings,
+                doc_ids=doc_ids,
+            )
+            return [IndexedChunk.model_validate(item) for item in payload]
+
         payload = load_json(self.index_file, [])
-        return [IndexedChunk.model_validate(item) for item in payload]
+        records = [IndexedChunk.model_validate(item) for item in payload]
+        if doc_ids:
+            doc_id_set = set(doc_ids)
+            records = [item for item in records if item.doc_id in doc_id_set]
+        if include_embeddings:
+            return records
+        for record in records:
+            record.embedding = []
+        return records
 
     def _vector_recall(
         self,
@@ -271,6 +319,15 @@ class SimpleVectorRAG:
         query_embedding: list[float],
         candidate_k: int,
     ) -> list[tuple[IndexedChunk, float]]:
+        if self.chunk_store is not None:
+            return [
+                (IndexedChunk.model_validate(record), score)
+                for record, score in self.chunk_store.vector_search(
+                    query_embedding,
+                    limit=candidate_k,
+                )
+            ]
+
         scored: list[tuple[IndexedChunk, float]] = []
         for record, _, _ in prepared:
             vector_score = _cosine_similarity(query_embedding, record.embedding)
@@ -324,7 +381,12 @@ class SimpleVectorRAG:
         max_fusion = max((item.fusion_score for item in candidates), default=0.0)
 
         for item in candidates:
-            item.lexical_score = _score_chunk(query, query_terms, _term_counter(item.record.title), item.record.text)
+            item.lexical_score = _score_chunk(
+                query,
+                query_terms,
+                _term_counter(item.record.title),
+                item.record.text,
+            )
             item.title_score = _title_match_score(query_terms, item.record.title)
             max_lexical = max(max_lexical, item.lexical_score)
             max_title = max(max_title, item.title_score)

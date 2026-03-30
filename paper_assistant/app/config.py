@@ -22,6 +22,15 @@ class Settings(BaseModel):
     manifest_file: Path = PROJECT_ROOT / "data" / "metadata" / "document_manifest.json"
     simple_index_file: Path = PROJECT_ROOT / "data" / "vector_store" / "simple_chunks.json"
     memory_dir: Path = PROJECT_ROOT / "data" / "memory"
+    rag_vector_backend: str = Field(default_factory=lambda: os.getenv("RAG_VECTOR_BACKEND", "postgres"))
+    rag_database_url: str | None = Field(
+        default_factory=lambda: (
+            os.getenv("RAG_DATABASE_URL")
+            or os.getenv("MEMORY_DATABASE_URL")
+            or "postgresql://postgres:postgres@localhost:54329/researchagent"
+        )
+    )
+    rag_chunk_table: str = Field(default_factory=lambda: os.getenv("RAG_CHUNK_TABLE", "rag_chunks"))
 
     llm_model: str | None = Field(default_factory=lambda: os.getenv("LLM_MODEL"))
     llm_api_key: str | None = Field(default_factory=lambda: os.getenv("LLM_API_KEY"))
@@ -73,6 +82,21 @@ class Settings(BaseModel):
         ]
         if missing:
             raise RuntimeError(f"Missing required env vars: {', '.join(missing)}")
+
+    def resolved_rag_vector_backend(self) -> str:
+        backend = (self.rag_vector_backend or "postgres").strip().lower()
+        if backend not in {"postgres", "file"}:
+            raise RuntimeError("RAG_VECTOR_BACKEND must be either 'postgres' or 'file'")
+        return backend
+
+    def resolved_rag_database_url(self) -> str | None:
+        if self.resolved_rag_vector_backend() != "postgres":
+            return None
+        if not self.rag_database_url:
+            raise RuntimeError(
+                "RAG_DATABASE_URL is required when RAG_VECTOR_BACKEND=postgres"
+            )
+        return self.rag_database_url
 
     @property
     def effective_embedding_api_key(self) -> str | None:
