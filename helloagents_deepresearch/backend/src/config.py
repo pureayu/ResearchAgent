@@ -62,6 +62,16 @@ class Configuration(BaseModel):
         title="Memory Database Path",
         description="SQLite path for structured research memory persistence",
     )
+    memory_backend: str = Field(
+        default="sqlite",
+        title="Memory Backend",
+        description="Structured memory backend to use: sqlite or postgres",
+    )
+    memory_database_url: Optional[str] = Field(
+        default=None,
+        title="Memory Database URL",
+        description="PostgreSQL connection URL for structured research memory persistence",
+    )
     fetch_full_page: bool = Field(
         default=True,
         title="Fetch Full Page",
@@ -152,6 +162,9 @@ class Configuration(BaseModel):
             "enable_notes": os.getenv("ENABLE_NOTES"),
             "notes_workspace": os.getenv("NOTES_WORKSPACE"),
             "memory_db_path": os.getenv("MEMORY_DB_PATH"),
+            "memory_backend": os.getenv("MEMORY_BACKEND"),
+            "memory_database_url": os.getenv("MEMORY_DATABASE_URL")
+            or os.getenv("DATABASE_URL"),
         }
 
         for key, value in env_aliases.items():
@@ -188,3 +201,21 @@ class Configuration(BaseModel):
         """Best-effort resolution of the embedding model identifier to use."""
 
         return self.embedding_model
+
+    def resolved_memory_backend(self) -> str:
+        """Resolve the structured memory backend to use."""
+
+        backend = (self.memory_backend or "").strip().lower()
+        database_url = (self.memory_database_url or "").strip().lower()
+
+        if database_url.startswith(("postgres://", "postgresql://")):
+            return "postgres"
+        if backend in {"postgres", "postgresql"}:
+            return "postgres"
+        return "sqlite"
+
+    def resolved_memory_database_url(self) -> Optional[str]:
+        """Return the PostgreSQL connection URL when configured."""
+
+        database_url = (self.memory_database_url or "").strip()
+        return database_url or None

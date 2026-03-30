@@ -14,6 +14,13 @@ from uuid import uuid4
 import httpx
 from openai import OpenAI
 
+try:
+    import psycopg
+    from psycopg.rows import dict_row
+except ImportError:
+    psycopg = None
+    dict_row = None
+
 from config import Configuration
 from models import SummaryState, TodoItem
 from prompts import semantic_fact_extraction_instructions
@@ -129,7 +136,7 @@ PROFILE_RULES = {
 }
 
 
-class MemoryService:
+class SQLiteMemoryService:
     """Facade between the agent runtime and structured long-term memory storage.
 
     Phase 1 only defines the interface and ownership boundary:
@@ -1303,3 +1310,838 @@ class MemoryService:
                 return None
 
         return None
+
+
+class PostgresMemoryService(SQLiteMemoryService):
+    """PostgreSQL + pgvector implementation for structured research memory."""
+
+    def __init__(self, config: Configuration) -> None:
+        self._config = config
+        self._database_url = config.resolved_memory_database_url()
+        if not self._database_url:
+            raise ValueError("MEMORY_DATABASE_URL is required when MEMORY_BACKEND=postgres")
+        if psycopg is None or dict_row is None:
+            raise RuntimeError(
+                "psycopg is required for the PostgreSQL memory backend. "
+                "Install backend dependencies or use the SQLite backend."
+            )
+        self._llm_client, self._llm_model = self._build_llm_client()
+        self._embedding_client, self._embedding_model = self._build_embedding_client()
+        self._init_db()
+
+    @property
+    def db_path(self) -> Path:
+        """PostgreSQL backend does not use a local SQLite path."""
+
+        raise RuntimeError("PostgreSQL memory backend does not use memory_db_path")
+
+    @property
+    def database_url(self) -> str:
+        """Return the configured PostgreSQL URL."""
+
+        return self._database_url
+
+    def _connect(self) -> Any:
+        """Open a PostgreSQL connection for memory operations."""
+
+        return psycopg.connect(self._database_url, row_factory=dict_row)
+
+    def _init_db(self) -> None:
+        """Create the PostgreSQL tables and pgvector extension if needed."""
+
+        with self._connect() as connection:
+            connection.execute("CREATE EXTENSION IF NOT EXISTS vector")
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS research_sessions (
+                    session_id TEXT PRIMARY KEY,
+                    topic TEXT NOT NULL,
+                    created_at TIMESTAMPTZ NOT NULL,
+                    updated_at TIMESTAMPTZ NOT NULL,
+                    last_run_id TEXT
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS research_runs (
+                    run_id TEXT PRIMARY KEY,
+                    session_id TEXT NOT NULL,
+                    topic TEXT NOT NULL,
+                    started_at TIMESTAMPTZ NOT NULL,
+                    finished_at TIMESTAMPTZ,
+                    final_report TEXT,
+                    report_note_id TEXT,
+                    task_count INTEGER DEFAULT 0
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS task_memories (
+                    id BIGSERIAL PRIMARY KEY,
+                    run_id TEXT NOT NULL,
+                    task_id INTEGER NOT NULL,
+                    title TEXT NOT NULL,
+                    intent TEXT NOT NULL,
+                    query TEXT NOT NULL,
+                    round_id INTEGER DEFAULT 1,
+                    origin TEXT DEFAULT 'planner',
+                    parent_task_id INTEGER,
+                    latest_query TEXT,
+                    status TEXT NOT NULL,
+                    search_backend TEXT,
+                    attempt_count INTEGER DEFAULT 0,
+                    evidence_count INTEGER DEFAULT 0,
+                    top_score DOUBLE PRECISION DEFAULT 0.0,
+                    summary TEXT,
+                    sources_summary TEXT,
+                    note_id TEXT,
+                    created_at TIMESTAMPTZ NOT NULL
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS semantic_facts (
+                    fact_id TEXT PRIMARY KEY,
+                    run_id TEXT NOT NULL,
+                    topic TEXT NOT NULL,
+                    scope TEXT,
+                    subject TEXT,
+                    fact TEXT NOT NULL,
+                    embedding vector,
+                    memory_scope TEXT NOT NULL DEFAULT 'session',
+                    stability_score DOUBLE PRECISION DEFAULT 0.0,
+                    sensitivity TEXT NOT NULL DEFAULT 'medium',
+                    source_session_id TEXT,
+                    confidence DOUBLE PRECISION DEFAULT 0.0,
+                    created_at TIMESTAMPTZ NOT NULL,
+                    last_verified_at TIMESTAMPTZ NOT NULL
+                )
+                """
+            )
+            connection.execute(
+                "ALTER TABLE task_memories ADD COLUMN IF NOT EXISTS round_id INTEGER DEFAULT 1"
+            )
+            connection.execute(
+                "ALTER TABLE task_memories ADD COLUMN IF NOT EXISTS origin TEXT DEFAULT 'planner'"
+            )
+            connection.execute(
+                "ALTER TABLE task_memories ADD COLUMN IF NOT EXISTS parent_task_id INTEGER"
+            )
+            connection.execute(
+                "ALTER TABLE semantic_facts ADD COLUMN IF NOT EXISTS memory_scope TEXT NOT NULL DEFAULT 'session'"
+            )
+            connection.execute(
+                "ALTER TABLE semantic_facts ADD COLUMN IF NOT EXISTS stability_score DOUBLE PRECISION DEFAULT 0.0"
+            )
+            connection.execute(
+                "ALTER TABLE semantic_facts ADD COLUMN IF NOT EXISTS sensitivity TEXT NOT NULL DEFAULT 'medium'"
+            )
+            connection.execute(
+                "ALTER TABLE semantic_facts ADD COLUMN IF NOT EXISTS source_session_id TEXT"
+            )
+            connection.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_research_runs_session_started
+                ON research_runs (session_id, started_at DESC)
+                """
+            )
+            connection.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_task_memories_run_created
+                ON task_memories (run_id, created_at DESC)
+                """
+            )
+            connection.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_semantic_facts_scope_verified
+                ON semantic_facts (memory_scope, last_verified_at DESC)
+                """
+            )
+            connection.execute(
+                """
+                UPDATE semantic_facts
+                SET memory_scope = %s
+                WHERE memory_scope IS NULL OR memory_scope = ''
+                """,
+                (SESSION_MEMORY_SCOPE,),
+            )
+            connection.execute(
+                """
+                UPDATE semantic_facts
+                SET stability_score = COALESCE(stability_score, confidence, 0.0)
+                WHERE stability_score IS NULL OR stability_score = 0.0
+                """
+            )
+            connection.execute(
+                """
+                UPDATE semantic_facts
+                SET sensitivity = %s
+                WHERE sensitivity IS NULL OR sensitivity = ''
+                """,
+                (MEDIUM_SENSITIVITY,),
+            )
+            connection.execute(
+                """
+                UPDATE semantic_facts sf
+                SET source_session_id = rr.session_id
+                FROM research_runs rr
+                WHERE rr.run_id = sf.run_id
+                  AND (sf.source_session_id IS NULL OR sf.source_session_id = '')
+                """
+            )
+            connection.commit()
+
+    def start_run(self, session_id: str, topic: str) -> str:
+        """Create a structured run record and return its run_id."""
+
+        run_id = uuid4().hex
+        started_at = datetime.now(timezone.utc).isoformat()
+
+        with self._connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO research_runs (
+                    run_id,
+                    session_id,
+                    topic,
+                    started_at
+                ) VALUES (%s, %s, %s, %s)
+                """,
+                (run_id, session_id, topic, started_at),
+            )
+            connection.execute(
+                """
+                UPDATE research_sessions
+                SET updated_at = %s,
+                    last_run_id = %s
+                WHERE session_id = %s
+                """,
+                (started_at, run_id, session_id),
+            )
+            connection.commit()
+
+        return run_id
+
+    def save_task_memory(self, run_id: str, task: TodoItem) -> None:
+        """Persist a task-level episodic memory record for the current run."""
+
+        created_at = datetime.now(timezone.utc).isoformat()
+
+        with self._connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO task_memories (
+                    run_id,
+                    task_id,
+                    title,
+                    intent,
+                    query,
+                    round_id,
+                    origin,
+                    parent_task_id,
+                    latest_query,
+                    status,
+                    search_backend,
+                    attempt_count,
+                    evidence_count,
+                    top_score,
+                    summary,
+                    sources_summary,
+                    note_id,
+                    created_at
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    run_id,
+                    task.id,
+                    task.title,
+                    task.intent,
+                    task.query,
+                    task.round_id,
+                    task.origin,
+                    task.parent_task_id,
+                    task.latest_query,
+                    task.status,
+                    task.search_backend,
+                    task.attempt_count,
+                    task.evidence_count,
+                    task.top_score,
+                    task.summary,
+                    task.sources_summary,
+                    task.note_id,
+                    created_at,
+                ),
+            )
+            connection.commit()
+
+    def save_report_memory(self, run_id: str, state: SummaryState, report: str) -> None:
+        """Persist the final report and run-level summary information."""
+
+        finished_at = datetime.now(timezone.utc).isoformat()
+        task_count = len(state.todo_items)
+
+        with self._connect() as connection:
+            connection.execute(
+                """
+                UPDATE research_runs
+                SET finished_at = %s,
+                    final_report = %s,
+                    report_note_id = %s,
+                    task_count = %s
+                WHERE run_id = %s
+                """,
+                (
+                    finished_at,
+                    report,
+                    state.report_note_id,
+                    task_count,
+                    run_id,
+                ),
+            )
+            connection.commit()
+
+    def get_or_create_session(self, session_id: str | None, topic: str) -> str:
+        """Return an existing session_id or create a new research session."""
+
+        now = datetime.now(timezone.utc).isoformat()
+        resolved_session_id = session_id or uuid4().hex
+
+        with self._connect() as connection:
+            existing = connection.execute(
+                """
+                SELECT session_id
+                FROM research_sessions
+                WHERE session_id = %s
+                """,
+                (resolved_session_id,),
+            ).fetchone()
+
+            if existing:
+                connection.execute(
+                    """
+                    UPDATE research_sessions
+                    SET updated_at = %s
+                    WHERE session_id = %s
+                    """,
+                    (now, resolved_session_id),
+                )
+            else:
+                connection.execute(
+                    """
+                    INSERT INTO research_sessions (
+                        session_id,
+                        topic,
+                        created_at,
+                        updated_at
+                    ) VALUES (%s, %s, %s, %s)
+                    """,
+                    (resolved_session_id, topic, now, now),
+                )
+            connection.commit()
+
+        return resolved_session_id
+
+    def load_relevant_context(
+        self,
+        session_id: str | None,
+        topic: str,
+        *,
+        exclude_run_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Load recalled memory context for a new topic."""
+
+        session_runs: list[dict[str, Any]] = []
+        recent_tasks: list[dict[str, Any]] = []
+        session_facts: list[dict[str, Any]] = []
+        profile_facts: list[dict[str, Any]] = []
+        global_facts: list[dict[str, Any]] = []
+
+        with self._connect() as connection:
+            profile_candidates = self._load_profile_candidates(connection)
+            expanded_topic = self._build_memory_search_text(
+                topic, profile_candidates=profile_candidates
+            )
+
+            run_rows: list[dict[str, Any]] = []
+            if session_id:
+                sql = """
+                    SELECT run_id, session_id, topic, started_at, finished_at, final_report, task_count
+                    FROM research_runs
+                    WHERE session_id = %s
+                """
+                params: list[Any] = [session_id]
+                if exclude_run_id:
+                    sql += " AND run_id != %s"
+                    params.append(exclude_run_id)
+                sql += " ORDER BY started_at DESC LIMIT 3"
+                run_rows = connection.execute(sql, params).fetchall()
+
+            for row in run_rows:
+                final_report = row["final_report"] or ""
+                session_runs.append(
+                    {
+                        "run_id": row["run_id"],
+                        "session_id": row["session_id"],
+                        "topic": row["topic"],
+                        "started_at": row["started_at"],
+                        "finished_at": row["finished_at"],
+                        "task_count": row["task_count"],
+                        "report_excerpt": final_report[:600],
+                    }
+                )
+
+            run_ids = [row["run_id"] for row in run_rows]
+            if run_ids:
+                task_rows = connection.execute(
+                    """
+                    SELECT run_id, task_id, title, status, summary, created_at
+                    FROM task_memories
+                    WHERE run_id = ANY(%s)
+                    ORDER BY created_at DESC
+                    LIMIT 8
+                    """,
+                    (run_ids,),
+                ).fetchall()
+            else:
+                task_rows = []
+
+            for row in task_rows:
+                recent_tasks.append(
+                    {
+                        "run_id": row["run_id"],
+                        "task_id": row["task_id"],
+                        "title": row["title"],
+                        "status": row["status"],
+                        "summary": row["summary"],
+                        "created_at": row["created_at"],
+                    }
+                )
+
+            if run_ids:
+                session_facts = self._search_semantic_facts(
+                    connection,
+                    expanded_topic,
+                    run_ids=run_ids,
+                    memory_scope=SESSION_MEMORY_SCOPE,
+                )
+            profile_facts = self._search_semantic_facts(
+                connection,
+                expanded_topic,
+                memory_scope=PROFILE_MEMORY_SCOPE,
+            )
+            expanded_with_history = self._build_memory_search_text(
+                topic,
+                profile_candidates=profile_facts or profile_candidates,
+                session_facts=session_facts,
+            )
+            global_facts = self._search_semantic_facts(
+                connection,
+                expanded_with_history,
+                memory_scope=GLOBAL_MEMORY_SCOPE,
+            )
+
+        return {
+            "session_runs": session_runs,
+            "recent_tasks": recent_tasks,
+            "session_facts": session_facts,
+            "profile_facts": profile_facts,
+            "global_facts": global_facts,
+            "semantic_facts": session_facts,
+        }
+
+    def _search_semantic_facts(
+        self,
+        connection: Any,
+        topic: str,
+        *,
+        run_ids: list[str] | None = None,
+        memory_scope: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Retrieve the most relevant semantic facts for the current topic."""
+
+        embedding_results = self._search_semantic_facts_by_embedding(
+            connection,
+            topic,
+            run_ids=run_ids,
+            memory_scope=memory_scope,
+        )
+        if embedding_results:
+            return embedding_results
+
+        tokens = re.findall(
+            r"[\u4e00-\u9fff]{2,}|[A-Za-z0-9][A-Za-z0-9_-]{1,}", topic or ""
+        )
+        deduped: list[str] = []
+        for token in tokens:
+            normalized = token.strip()
+            if normalized and normalized not in deduped:
+                deduped.append(normalized)
+        if not deduped:
+            return []
+
+        token_clauses: list[str] = []
+        params: list[Any] = []
+        for token in deduped[:6]:
+            pattern = f"%{token}%"
+            token_clauses.append(
+                "(topic ILIKE %s OR COALESCE(subject, '') ILIKE %s OR fact ILIKE %s)"
+            )
+            params.extend([pattern, pattern, pattern])
+
+        where_clauses = [f"({' OR '.join(token_clauses)})"]
+        if memory_scope:
+            where_clauses.append("memory_scope = %s")
+            params.append(memory_scope)
+        if run_ids:
+            where_clauses.append("run_id = ANY(%s)")
+            params.append(run_ids)
+
+        rows = connection.execute(
+            f"""
+            SELECT fact_id, run_id, topic, scope, subject, fact, confidence,
+                   stability_score, sensitivity, memory_scope, source_session_id,
+                   last_verified_at
+            FROM semantic_facts
+            WHERE {' AND '.join(where_clauses)}
+            ORDER BY confidence DESC, last_verified_at DESC
+            LIMIT 5
+            """,
+            params,
+        ).fetchall()
+
+        return [
+            {
+                "fact_id": row["fact_id"],
+                "run_id": row["run_id"],
+                "topic": row["topic"],
+                "scope": row["scope"],
+                "subject": row["subject"],
+                "fact": row["fact"],
+                "confidence": row["confidence"],
+                "stability_score": row["stability_score"],
+                "sensitivity": row["sensitivity"],
+                "memory_scope": row["memory_scope"],
+                "source_session_id": row["source_session_id"],
+                "last_verified_at": row["last_verified_at"],
+            }
+            for row in rows
+        ]
+
+    def _search_semantic_facts_by_embedding(
+        self,
+        connection: Any,
+        topic: str,
+        *,
+        run_ids: list[str] | None = None,
+        memory_scope: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Retrieve semantic facts by vector similarity inside PostgreSQL."""
+
+        query_embedding = self._embed_query(topic)
+        if not query_embedding:
+            return []
+
+        vector_literal = self._vector_literal(query_embedding)
+        where_clauses = ["embedding IS NOT NULL"]
+        params: list[Any] = [vector_literal]
+        if memory_scope:
+            where_clauses.append("memory_scope = %s")
+            params.append(memory_scope)
+        if run_ids:
+            where_clauses.append("run_id = ANY(%s)")
+            params.append(run_ids)
+        params.append(vector_literal)
+
+        rows = connection.execute(
+            f"""
+            SELECT fact_id, run_id, topic, scope, subject, fact, confidence, stability_score,
+                   sensitivity, memory_scope, source_session_id, last_verified_at,
+                   1 - (embedding <=> %s::vector) AS similarity
+            FROM semantic_facts
+            WHERE {' AND '.join(where_clauses)}
+            ORDER BY embedding <=> %s::vector ASC, confidence DESC
+            LIMIT 5
+            """,
+            params,
+        ).fetchall()
+
+        return [
+            {
+                "fact_id": row["fact_id"],
+                "run_id": row["run_id"],
+                "topic": row["topic"],
+                "scope": row["scope"],
+                "subject": row["subject"],
+                "fact": row["fact"],
+                "confidence": row["confidence"],
+                "stability_score": row["stability_score"],
+                "sensitivity": row["sensitivity"],
+                "memory_scope": row["memory_scope"],
+                "source_session_id": row["source_session_id"],
+                "last_verified_at": row["last_verified_at"],
+                "similarity": row["similarity"],
+            }
+            for row in rows
+        ]
+
+    def _load_profile_candidates(
+        self,
+        connection: Any,
+        *,
+        limit: int = 12,
+    ) -> list[dict[str, Any]]:
+        """Load recent profile facts for memory query expansion."""
+
+        rows = connection.execute(
+            """
+            SELECT fact_id, subject, fact, confidence, stability_score, sensitivity, source_session_id
+            FROM semantic_facts
+            WHERE memory_scope = %s
+            ORDER BY last_verified_at DESC
+            LIMIT %s
+            """,
+            (PROFILE_MEMORY_SCOPE, limit),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def save_semantic_facts(
+        self,
+        run_id: str,
+        topic: str,
+        facts: list[dict[str, Any]],
+        *,
+        session_id: str | None = None,
+    ) -> None:
+        """Persist semantic facts into PostgreSQL."""
+
+        if not facts:
+            return
+
+        resolved_session_id = session_id or self._resolve_session_id_for_run(run_id)
+        now = datetime.now(timezone.utc).isoformat()
+        prepared_facts = [
+            self._prepare_semantic_fact(
+                topic,
+                item,
+                session_id=resolved_session_id,
+            )
+            for item in facts
+            if str(item.get("fact") or "").strip()
+        ]
+        embedding_inputs = [
+            f"{topic}\n{item.get('subject') or ''}\n{item.get('fact') or ''}".strip()
+            for item in prepared_facts
+        ]
+        embeddings = self._embed_texts(embedding_inputs)
+
+        with self._connect() as connection:
+            for idx, item in enumerate(prepared_facts):
+                embedding_vector = None
+                if idx < len(embeddings):
+                    embedding_vector = self._vector_literal(embeddings[idx])
+                existing = self._find_existing_fact(
+                    connection,
+                    fact=item,
+                    session_id=resolved_session_id,
+                )
+                if existing:
+                    update_params: list[Any] = [
+                        run_id,
+                        topic,
+                        item.get("scope"),
+                        item.get("subject"),
+                        item.get("fact"),
+                    ]
+                    set_clauses = [
+                        "run_id = %s",
+                        "topic = %s",
+                        "scope = %s",
+                        "subject = %s",
+                        "fact = %s",
+                    ]
+                    if embedding_vector is not None:
+                        set_clauses.append("embedding = %s::vector")
+                        update_params.append(embedding_vector)
+                    set_clauses.extend(
+                        [
+                            "memory_scope = %s",
+                            "stability_score = GREATEST(COALESCE(stability_score, 0.0), %s)",
+                            "sensitivity = %s",
+                            "source_session_id = COALESCE(source_session_id, %s)",
+                            "confidence = GREATEST(COALESCE(confidence, 0.0), %s)",
+                            "last_verified_at = %s",
+                        ]
+                    )
+                    update_params.extend(
+                        [
+                            item.get("memory_scope"),
+                            float(item.get("stability_score", 0.0) or 0.0),
+                            item.get("sensitivity"),
+                            resolved_session_id,
+                            float(item.get("confidence", 0.0) or 0.0),
+                            now,
+                            existing["fact_id"],
+                        ]
+                    )
+                    connection.execute(
+                        f"""
+                        UPDATE semantic_facts
+                        SET {', '.join(set_clauses)}
+                        WHERE fact_id = %s
+                        """,
+                        update_params,
+                    )
+                    continue
+
+                fact_id = uuid4().hex
+                if embedding_vector is not None:
+                    connection.execute(
+                        """
+                        INSERT INTO semantic_facts (
+                            fact_id,
+                            run_id,
+                            topic,
+                            scope,
+                            subject,
+                            fact,
+                            embedding,
+                            memory_scope,
+                            stability_score,
+                            sensitivity,
+                            source_session_id,
+                            confidence,
+                            created_at,
+                            last_verified_at
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s::vector, %s, %s, %s, %s, %s, %s, %s)
+                        """,
+                        (
+                            fact_id,
+                            run_id,
+                            topic,
+                            item.get("scope"),
+                            item.get("subject"),
+                            item.get("fact"),
+                            embedding_vector,
+                            item.get("memory_scope"),
+                            float(item.get("stability_score", 0.0) or 0.0),
+                            item.get("sensitivity"),
+                            resolved_session_id,
+                            float(item.get("confidence", 0.0) or 0.0),
+                            now,
+                            now,
+                        ),
+                    )
+                else:
+                    connection.execute(
+                        """
+                        INSERT INTO semantic_facts (
+                            fact_id,
+                            run_id,
+                            topic,
+                            scope,
+                            subject,
+                            fact,
+                            embedding,
+                            memory_scope,
+                            stability_score,
+                            sensitivity,
+                            source_session_id,
+                            confidence,
+                            created_at,
+                            last_verified_at
+                        ) VALUES (%s, %s, %s, %s, %s, %s, NULL, %s, %s, %s, %s, %s, %s, %s)
+                        """,
+                        (
+                            fact_id,
+                            run_id,
+                            topic,
+                            item.get("scope"),
+                            item.get("subject"),
+                            item.get("fact"),
+                            item.get("memory_scope"),
+                            float(item.get("stability_score", 0.0) or 0.0),
+                            item.get("sensitivity"),
+                            resolved_session_id,
+                            float(item.get("confidence", 0.0) or 0.0),
+                            now,
+                            now,
+                        ),
+                    )
+            connection.commit()
+
+    def _resolve_session_id_for_run(self, run_id: str) -> str | None:
+        """Look up the session owning a given run."""
+
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT session_id FROM research_runs WHERE run_id = %s",
+                (run_id,),
+            ).fetchone()
+        if not row:
+            return None
+        return str(row["session_id"] or "").strip() or None
+
+    def _find_existing_fact(
+        self,
+        connection: Any,
+        *,
+        fact: dict[str, Any],
+        session_id: str | None,
+    ) -> dict[str, Any] | None:
+        """Find an existing fact row for minimal deduplication."""
+
+        memory_scope = str(fact.get("memory_scope") or SESSION_MEMORY_SCOPE)
+        subject = str(fact.get("subject") or "").strip()
+        fact_text = str(fact.get("fact") or "").strip()
+        if not fact_text:
+            return None
+
+        if memory_scope == SESSION_MEMORY_SCOPE:
+            return connection.execute(
+                """
+                SELECT fact_id
+                FROM semantic_facts
+                WHERE memory_scope = %s
+                  AND source_session_id IS NOT DISTINCT FROM %s
+                  AND COALESCE(subject, '') = %s
+                  AND fact = %s
+                LIMIT 1
+                """,
+                (memory_scope, session_id, subject, fact_text),
+            ).fetchone()
+
+        return connection.execute(
+            """
+            SELECT fact_id
+            FROM semantic_facts
+            WHERE memory_scope = %s
+              AND COALESCE(subject, '') = %s
+              AND fact = %s
+            LIMIT 1
+            """,
+            (memory_scope, subject, fact_text),
+        ).fetchone()
+
+    def _vector_literal(self, values: list[float]) -> str:
+        """Serialize a Python embedding list into pgvector text format."""
+
+        return "[" + ",".join(format(float(value), ".9g") for value in values) + "]"
+
+
+class MemoryService:
+    """Backend-selecting facade for structured research memory."""
+
+    def __init__(self, config: Configuration) -> None:
+        backend = config.resolved_memory_backend()
+        if backend == "postgres":
+            self._impl = PostgresMemoryService(config)
+        else:
+            self._impl = SQLiteMemoryService(config)
+
+    def __getattr__(self, name: str) -> Any:
+        """Forward unknown attributes to the selected backend implementation."""
+
+        return getattr(self._impl, name)
