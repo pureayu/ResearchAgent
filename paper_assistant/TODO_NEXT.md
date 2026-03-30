@@ -5,6 +5,7 @@
 - [x] 明确 memory ownership：
   - [x] Web / Agent 后端是 memory 的主归属层
   - [x] `paper_assistant/app/memory/*` 不再作为主线继续扩展
+  - [x] `paper_assistant/app/memory/*` 已从代码层移除
   - [x] 后续多轮对话、研究续写、planner recall、自循环 loop 优先在后端实现
 
 ## 已完成
@@ -50,9 +51,10 @@
 
 ## 后续工作
 
-- [ ] 视情况清理或归档 `paper_assistant/app/memory/*`
-  - [ ] 保留为实验代码，或在确认无依赖后移除
-  - [ ] 避免新人误解为主线 memory 所在
+- [x] 清理 `paper_assistant/app/memory/*`
+  - [x] 移除已废弃的 working / research memory 原型代码
+  - [x] 清理 CLI 对旧 memory manager 的依赖
+  - [x] 避免新人误解为主线 memory 所在
 - [ ] 为仓库补一份统一架构文档
   - [ ] 明确 `helloagents_deepresearch` 与 `paper_assistant` 的职责边界
   - [ ] 明确 memory 的单一所有权在后端 orchestrator 层
