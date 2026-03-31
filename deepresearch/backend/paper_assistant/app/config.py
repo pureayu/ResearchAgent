@@ -16,7 +16,6 @@ class Settings(BaseModel):
     processed_dir: Path = PROJECT_ROOT / "data" / "processed"
     metadata_dir: Path = PROJECT_ROOT / "data" / "metadata"
     outputs_dir: Path = PROJECT_ROOT / "outputs"
-    rag_working_dir: Path = PROJECT_ROOT / "data" / "rag_store"
     vector_store_dir: Path = PROJECT_ROOT / "data" / "vector_store"
     metadata_file: Path = PROJECT_ROOT / "data" / "metadata" / "documents.json"
     manifest_file: Path = PROJECT_ROOT / "data" / "metadata" / "document_manifest.json"
@@ -43,7 +42,6 @@ class Settings(BaseModel):
     embedding_dim: int = Field(default_factory=lambda: int(os.getenv("EMBEDDING_DIM", "1536")))
     embedding_max_tokens: int = Field(default_factory=lambda: int(os.getenv("EMBEDDING_MAX_TOKENS", "8192")))
 
-    default_query_mode: str = Field(default_factory=lambda: os.getenv("DEFAULT_QUERY_MODE", "hybrid"))
     response_language: str = Field(default_factory=lambda: os.getenv("RESPONSE_LANGUAGE", "Chinese"))
 
     def ensure_directories(self) -> None:
@@ -52,7 +50,6 @@ class Settings(BaseModel):
             self.processed_dir,
             self.metadata_dir,
             self.outputs_dir,
-            self.rag_working_dir,
             self.vector_store_dir,
             self.memory_dir,
         ):

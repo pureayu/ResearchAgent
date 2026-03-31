@@ -1,22 +1,22 @@
 # ResearchAgent
 
-一个聚合仓库，包含两部分：
+当前仓库已收敛为一个统一应用目录：
 
-- `paper_assistant/`：本地文献 RAG 内核与评测脚本
-- `helloagents_deepresearch/`：基于 `hello-agents` Chapter 14 二次开发的前后端研究型 Agent 应用
+- `deepresearch/`：主应用根目录
+- `deepresearch/backend/paper_assistant/`：嵌入式本地文献 RAG 内核与评测脚本
 
 ## 仓库结构
 
 ```text
 ResearchAgent/
-  paper_assistant/
-    app/
-    scripts/
-    data/metadata/
-    outputs/
-  helloagents_deepresearch/
+  deepresearch/
     backend/
       src/
+      paper_assistant/
+        app/
+        scripts/
+        data/metadata/
+        outputs/
     frontend/
       src/
 ```
@@ -27,8 +27,8 @@ ResearchAgent/
 
 核心目录：
 
-- `paper_assistant/app/`
-- `paper_assistant/scripts/`
+- `deepresearch/backend/paper_assistant/app/`
+- `deepresearch/backend/paper_assistant/scripts/`
 
 关键能力：
 
@@ -43,8 +43,8 @@ ResearchAgent/
 
 核心目录：
 
-- `helloagents_deepresearch/backend/src/`
-- `helloagents_deepresearch/frontend/src/`
+- `deepresearch/backend/src/`
+- `deepresearch/frontend/src/`
 
 关键能力：
 
@@ -55,32 +55,20 @@ ResearchAgent/
 
 ### 3. 集成方式
 
-`helloagents_deepresearch` 通过工具层调用 `paper_assistant` 的本地文献能力：
+`deepresearch` 通过工具层调用 `paper_assistant` 的本地文献能力：
 
-- `paper_assistant/app/local_library_tools.py`
-- `paper_assistant/app/simple_vector_rag.py`
+- `deepresearch/backend/paper_assistant/app/local_library_tools.py`
+- `deepresearch/backend/paper_assistant/app/simple_vector_rag.py`
 
 ## 运行说明
 
-两个子项目分别维护依赖环境：
+当前结构已经收敛成前端和后端两块，其中本地 RAG 作为后端内部子目录维护：
 
-### paper_assistant
-
-参考：
-
-- `paper_assistant/README.md`
-
-### helloagents_deepresearch
-
-后端：
-
-- `helloagents_deepresearch/backend/`
-
-前端：
-
-- `helloagents_deepresearch/frontend/`
+- 本地 RAG: `deepresearch/backend/paper_assistant/`
+- 后端: `deepresearch/backend/`
+- 前端: `deepresearch/frontend/`
 
 ## 说明
 
 - 仓库不包含本地 `.env`、虚拟环境、`node_modules`、前端构建产物、运行期 `notes/`、原始 PDF 和生成索引。
-- `helloagents_deepresearch` 基于 `datawhalechina/hello-agents` Chapter 14 代码进行二次开发，许可证见根目录 `LICENSE.txt`。
+- `deepresearch` 基于 `datawhalechina/hello-agents` Chapter 14 代码进行二次开发，许可证见根目录 `LICENSE.txt`。

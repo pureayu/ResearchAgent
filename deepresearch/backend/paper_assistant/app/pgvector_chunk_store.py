@@ -25,7 +25,7 @@ class PGVectorChunkStore:
         if psycopg is None or dict_row is None:
             raise RuntimeError(
                 "psycopg is required for the pgvector RAG backend. "
-                "Install requirements.txt before using local RAG."
+                "Install the backend Python dependencies before using local RAG."
             )
         self.settings = settings
         self.database_url = settings.resolved_rag_database_url()

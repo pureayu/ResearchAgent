@@ -15,8 +15,7 @@
 ### 本地文献能力
 - 文档导入与 PDF 清洗
 - chunking 与 metadata 管理
-- `local / simple / lightrag` 三条后端
-- 当前主后端：`simple`
+- 单一本地检索后端：`simple`
 - `bm25 / vector / hybrid`
 - controlled query expansion
 - dual-query retrieval
@@ -548,7 +547,7 @@ trace 字段建议：
 - 已 clone 并盘点 `hello-agents` 第十四章代码结构。
 - 已确认第一版接入点是 `backend/src/services/search.py`，不是直接改 Planner 或 Reporter。
 - 已在 `paper_assistant` 中新增本地工具接口文件：
-  [local_library_tools.py](/home/pureayu/code/paper_assistant/app/local_library_tools.py)
+  [local_library_tools.py](/home/pureayu/code/ResearchAgent/deepresearch/backend/paper_assistant/app/local_library_tools.py)
 - 当前已完成：
   - `LocalLibrarySearchTool` schema
   - `LocalLibraryAnswerTool` schema

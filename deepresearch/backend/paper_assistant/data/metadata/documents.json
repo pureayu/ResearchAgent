@@ -10,7 +10,7 @@
       "foundation",
       "knowledge-intensive-nlp"
     ],
-    "filepath": "/home/pureayu/code/paper_assistant/data/raw/2005.11401.pdf",
+    "filepath": "/home/pureayu/code/ResearchAgent/deepresearch/backend/paper_assistant/data/raw/2005.11401.pdf",
     "filetype": "pdf",
     "checksum": "23e3249e9a1e75418d82efecab0ea8c4d033b89c93742f63208d47ce01f21233",
     "status": "processed",
@@ -20,7 +20,7 @@
     "last_error": null,
     "abstract": null,
     "notes": null,
-    "processed_path": "/home/pureayu/code/paper_assistant/data/processed/2005-11401-23e3249e9a1e.json"
+    "processed_path": "/home/pureayu/code/ResearchAgent/deepresearch/backend/paper_assistant/data/processed/2005-11401-23e3249e9a1e.json"
   },
   {
     "id": "2310-11511-d9eaa1398aba",
@@ -33,7 +33,7 @@
       "self-rag",
       "self-reflection"
     ],
-    "filepath": "/home/pureayu/code/paper_assistant/data/raw/2310.11511.pdf",
+    "filepath": "/home/pureayu/code/ResearchAgent/deepresearch/backend/paper_assistant/data/raw/2310.11511.pdf",
     "filetype": "pdf",
     "checksum": "d9eaa1398abac0df67a9d0933a5bf8b6d9d83d2e72da2a486073cd842dd52978",
     "status": "processed",
@@ -43,7 +43,7 @@
     "last_error": null,
     "abstract": null,
     "notes": null,
-    "processed_path": "/home/pureayu/code/paper_assistant/data/processed/2310-11511-d9eaa1398aba.json"
+    "processed_path": "/home/pureayu/code/ResearchAgent/deepresearch/backend/paper_assistant/data/processed/2310-11511-d9eaa1398aba.json"
   },
   {
     "id": "2312-10997-396a0fadeb4c",
@@ -56,7 +56,7 @@
       "survey",
       "llm"
     ],
-    "filepath": "/home/pureayu/code/paper_assistant/data/raw/2312.10997.pdf",
+    "filepath": "/home/pureayu/code/ResearchAgent/deepresearch/backend/paper_assistant/data/raw/2312.10997.pdf",
     "filetype": "pdf",
     "checksum": "396a0fadeb4cd40f5c8ccc36b73a0815f6cb4d7f6bfa53b6c48c1f9aba7c7e02",
     "status": "processed",
@@ -66,7 +66,7 @@
     "last_error": null,
     "abstract": null,
     "notes": null,
-    "processed_path": "/home/pureayu/code/paper_assistant/data/processed/2312-10997-396a0fadeb4c.json"
+    "processed_path": "/home/pureayu/code/ResearchAgent/deepresearch/backend/paper_assistant/data/processed/2312-10997-396a0fadeb4c.json"
   },
   {
     "id": "2401-15391-743155d9b054",
@@ -80,7 +80,7 @@
       "multihop",
       "evaluation"
     ],
-    "filepath": "/home/pureayu/code/paper_assistant/data/raw/2401.15391.pdf",
+    "filepath": "/home/pureayu/code/ResearchAgent/deepresearch/backend/paper_assistant/data/raw/2401.15391.pdf",
     "filetype": "pdf",
     "checksum": "743155d9b0541c99a7f6fb89772fc0856cf32989db61204bb6796fe293cf0fcb",
     "status": "processed",
@@ -90,7 +90,7 @@
     "last_error": null,
     "abstract": null,
     "notes": null,
-    "processed_path": "/home/pureayu/code/paper_assistant/data/processed/2401-15391-743155d9b054.json"
+    "processed_path": "/home/pureayu/code/ResearchAgent/deepresearch/backend/paper_assistant/data/processed/2401-15391-743155d9b054.json"
   },
   {
     "id": "2401-15884-975aa1fd3c1b",
@@ -103,7 +103,7 @@
       "crag",
       "retrieval-correction"
     ],
-    "filepath": "/home/pureayu/code/paper_assistant/data/raw/2401.15884.pdf",
+    "filepath": "/home/pureayu/code/ResearchAgent/deepresearch/backend/paper_assistant/data/raw/2401.15884.pdf",
     "filetype": "pdf",
     "checksum": "975aa1fd3c1b603126e93ff99d6504858b61301bf1d34c9df88ebe53a0b026cb",
     "status": "processed",
@@ -113,7 +113,7 @@
     "last_error": null,
     "abstract": null,
     "notes": null,
-    "processed_path": "/home/pureayu/code/paper_assistant/data/processed/2401-15884-975aa1fd3c1b.json"
+    "processed_path": "/home/pureayu/code/ResearchAgent/deepresearch/backend/paper_assistant/data/processed/2401-15884-975aa1fd3c1b.json"
   },
   {
     "id": "2402-03367-332107af2d6e",
@@ -127,7 +127,7 @@
       "retrieval",
       "hybrid"
     ],
-    "filepath": "/home/pureayu/code/paper_assistant/data/raw/2402.03367.pdf",
+    "filepath": "/home/pureayu/code/ResearchAgent/deepresearch/backend/paper_assistant/data/raw/2402.03367.pdf",
     "filetype": "pdf",
     "checksum": "332107af2d6e0af4c26634a5a9da7bbc123c257c9048ea4011b6a42ba26f9e2b",
     "status": "processed",
@@ -137,7 +137,7 @@
     "last_error": null,
     "abstract": null,
     "notes": null,
-    "processed_path": "/home/pureayu/code/paper_assistant/data/processed/2402-03367-332107af2d6e.json"
+    "processed_path": "/home/pureayu/code/ResearchAgent/deepresearch/backend/paper_assistant/data/processed/2402-03367-332107af2d6e.json"
   },
   {
     "id": "2403-14403-12d262c68262",
@@ -151,7 +151,7 @@
       "routing",
       "question-complexity"
     ],
-    "filepath": "/home/pureayu/code/paper_assistant/data/raw/2403.14403.pdf",
+    "filepath": "/home/pureayu/code/ResearchAgent/deepresearch/backend/paper_assistant/data/raw/2403.14403.pdf",
     "filetype": "pdf",
     "checksum": "12d262c682626c26a98bdafc7ec5dc6af3fae8247d26d4f2c712b1599dafce62",
     "status": "processed",
@@ -161,7 +161,7 @@
     "last_error": null,
     "abstract": null,
     "notes": null,
-    "processed_path": "/home/pureayu/code/paper_assistant/data/processed/2403-14403-12d262c68262.json"
+    "processed_path": "/home/pureayu/code/ResearchAgent/deepresearch/backend/paper_assistant/data/processed/2403-14403-12d262c68262.json"
   },
   {
     "id": "2404-03514-3fadd73e7125",
@@ -175,7 +175,7 @@
       "embedding",
       "retrieval"
     ],
-    "filepath": "/home/pureayu/code/paper_assistant/data/raw/2404.03514.pdf",
+    "filepath": "/home/pureayu/code/ResearchAgent/deepresearch/backend/paper_assistant/data/raw/2404.03514.pdf",
     "filetype": "pdf",
     "checksum": "3fadd73e7125677177d69020cf1ea99bb887fdfb477ed98616ca0d3341e6fe9c",
     "status": "processed",
@@ -185,7 +185,7 @@
     "last_error": null,
     "abstract": null,
     "notes": null,
-    "processed_path": "/home/pureayu/code/paper_assistant/data/processed/2404-03514-3fadd73e7125.json"
+    "processed_path": "/home/pureayu/code/ResearchAgent/deepresearch/backend/paper_assistant/data/processed/2404-03514-3fadd73e7125.json"
   },
   {
     "id": "2408-08067-1034bf8f0b90",
@@ -199,7 +199,7 @@
       "diagnosis",
       "ragchecker"
     ],
-    "filepath": "/home/pureayu/code/paper_assistant/data/raw/2408.08067.pdf",
+    "filepath": "/home/pureayu/code/ResearchAgent/deepresearch/backend/paper_assistant/data/raw/2408.08067.pdf",
     "filetype": "pdf",
     "checksum": "1034bf8f0b909895540e093f2d42d6d81f1dfae51711fcf1b0379dc834c084c2",
     "status": "processed",
@@ -209,7 +209,7 @@
     "last_error": null,
     "abstract": null,
     "notes": null,
-    "processed_path": "/home/pureayu/code/paper_assistant/data/processed/2408-08067-1034bf8f0b90.json"
+    "processed_path": "/home/pureayu/code/ResearchAgent/deepresearch/backend/paper_assistant/data/processed/2408-08067-1034bf8f0b90.json"
   },
   {
     "id": "rag-challenges-note-9ad8c6c4617f",
@@ -222,7 +222,7 @@
       "notes",
       "challenges"
     ],
-    "filepath": "/home/pureayu/code/paper_assistant/data/raw/rag_challenges_note.md",
+    "filepath": "/home/pureayu/code/ResearchAgent/deepresearch/backend/paper_assistant/data/raw/rag_challenges_note.md",
     "filetype": "md",
     "checksum": "9ad8c6c4617fb0c5a6a75b3c3da79df77e9b13119e714e0cfe2341681f71bba9",
     "status": "processed",
@@ -232,6 +232,6 @@
     "last_error": null,
     "abstract": null,
     "notes": null,
-    "processed_path": "/home/pureayu/code/paper_assistant/data/processed/rag-challenges-note-9ad8c6c4617f.json"
+    "processed_path": "/home/pureayu/code/ResearchAgent/deepresearch/backend/paper_assistant/data/processed/rag-challenges-note-9ad8c6c4617f.json"
   }
 ]

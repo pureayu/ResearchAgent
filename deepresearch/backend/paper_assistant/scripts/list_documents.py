@@ -11,7 +11,7 @@ from app.metadata_store import MetadataStore
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="List imported local literature.")
+    parser = argparse.ArgumentParser(description="List processed local literature.")
     parser.add_argument("--keyword", type=str, default=None)
     parser.add_argument("--tag", type=str, default=None)
     parser.add_argument("--year", type=int, default=None)

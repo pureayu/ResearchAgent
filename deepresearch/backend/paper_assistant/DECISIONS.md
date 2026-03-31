@@ -1,14 +1,14 @@
 # 架构决策
 
-## 使用 simple 后端作为当前主检索路径
+## 收敛到 simple 后端作为唯一检索路径
 
 - 日期：2026-03-25
 - 背景：
   - LightRAG 在当前 MVP 阶段导入较慢，状态跟踪不稳定。
   - 项目需要一个可控、可评测、适合快速迭代的检索基线。
 - 决策：
-  - 保留 LightRAG 代码，用于后续对比。
-  - 当前开发和优化以 `simple` 后端为主。
+  - 删除 LightRAG 代码路径与相关依赖。
+  - 当前开发和优化统一收敛到 `simple` 后端。
 - 影响：
   - 后续重点放在 BM25、向量检索、混合召回、query expansion、rerank 和评测上。
 
@@ -70,12 +70,12 @@
 - 日期：2026-03-29
 - 背景：
   - 当前系统已经形成两层能力：
-    - `helloagents_deepresearch` 负责会话、研究流程、任务执行、报告与长期结构化记忆。
+    - `deepresearch` 负责会话、研究流程、任务执行、报告与长期结构化记忆。
     - `paper_assistant` 负责本地文献检索与 grounded answer。
   - `paper_assistant/app/memory/*` 虽然已做出原型，但 Web 主链路实际不会直接消费这层 memory。
   - 若继续并行开发两套 memory，会带来职责重复、session 语义分裂、召回来源不一致等问题。
 - 决策：
-  - 将 memory 的 source of truth 收敛到 `helloagents_deepresearch/backend/src/services/memory.py`。
+  - 将 memory 的 source of truth 收敛到 `deepresearch/backend/src/services/memory.py`。
   - `paper_assistant` 保持工具层定位，优先做无状态的检索、基于证据回答与文献总结能力。
   - `paper_assistant/app/memory/*` 视为实验性/过渡性实现，不再作为主线继续扩展。
   - 若后续需要上下文能力，由上层 Agent/Backend 在调用本地工具前完成 session recall、query rewrite 与 context injection。

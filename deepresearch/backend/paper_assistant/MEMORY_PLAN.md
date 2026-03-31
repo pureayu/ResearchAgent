@@ -1,7 +1,7 @@
 # Memory 系统分阶段规划
 
 > 说明：本文件记录的是 `paper_assistant` 层 memory 的设计与实验过程。  
-> 截至 2026-03-29，项目已决定将 memory 的主归属收敛到 `helloagents_deepresearch/backend/src/services/memory.py`。  
+> 截至 2026-03-29，项目已决定将 memory 的主归属收敛到 `deepresearch/backend/src/services/memory.py`。  
 > 因此本文件当前主要作为历史设计记录与实验参考，不再作为后续主线实施文档。
 
 ## 目标
@@ -17,7 +17,7 @@
 
 当前决策更新：
 - `paper_assistant` memory 原型已完成阶段性验证，但不再继续作为主线推进。
-- 真正服务 Web 多轮研究对话的 memory，将统一放在 `helloagents_deepresearch` 后端。
+- 真正服务 Web 多轮研究对话的 memory，将统一放在 `deepresearch` 后端。
 - 如后续保留 `paper_assistant/app/memory/*`，定位应为实验性或离线 CLI 参考实现。
 
 ## 当前问题

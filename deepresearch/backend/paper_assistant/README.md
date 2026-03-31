@@ -13,18 +13,16 @@
 ## 目录结构
 
 ```text
-paper_assistant/
+deepresearch/backend/paper_assistant/
   app/
   data/
     raw/
     processed/
     metadata/
-    rag_store/
   scripts/
   outputs/
   README.md
   TASKS.md
-  requirements.txt
   .env.example
 ```
 
@@ -32,7 +30,6 @@ paper_assistant/
 
 - 扫描 `data/raw/` 下的 PDF / md / txt 文档
 - 抽取文本并切分 chunk，保存在 `data/processed/` 作为导入中间产物
-- 将文档顺序写入 LightRAG
 - 用 `documents.json` 管理元数据
 - 命令行问答
 - 主题总结
@@ -41,18 +38,24 @@ paper_assistant/
 
 说明：
 
-- 回答主链路默认优先走 LightRAG。
-- 引用展示单独由本地 `pgvector` chunk store 完成，这样输出文件名 / 页码更稳定。
-- 如果 LightRAG 查询失败，`query_documents.py` 会回退到“本地证据 + LLM 生成”的模式。
+- 当前检索与问答主链路统一走本地 `pgvector` chunk store。
+- 建库流程分成两步：先抽取文档生成 `processed/*.json`，再构建向量索引。
+- 这样输出文件名 / 页码更稳定，也更方便做检索评测与重建。
 
 ## 安装
 
 ```bash
-cd /home/pureayu/code/paper_assistant
-python3 -m venv .venv
+cd /home/pureayu/code/ResearchAgent/deepresearch/backend
+uv sync
 source .venv/bin/activate
-pip install -r requirements.txt
 cp .env.example .env
+```
+
+然后在后端环境里运行本地 RAG 脚本，例如：
+
+```bash
+cd /home/pureayu/code/ResearchAgent/deepresearch/backend/paper_assistant
+python scripts/build_simple_index.py --rebuild
 ```
 
 然后编辑 `.env`：
@@ -100,25 +103,19 @@ docker run -d \
 
 ## 使用方法
 
-1. 仅做扫描和抽取，不写入 LightRAG：
-
-```bash
-python scripts/ingest_documents.py --skip-rag-insert
-```
-
-2. 写入 LightRAG：
+1. 扫描、抽取并更新文档元数据：
 
 ```bash
 python scripts/ingest_documents.py
 ```
 
-3. 构建本地 `pgvector` chunk 索引：
+2. 构建本地 `pgvector` chunk 索引：
 
 ```bash
 python scripts/build_simple_index.py --rebuild
 ```
 
-4. 查看文献列表：
+3. 查看文献列表：
 
 ```bash
 python scripts/list_documents.py
@@ -126,14 +123,14 @@ python scripts/list_documents.py --tag rag
 python scripts/list_documents.py --keyword transformer
 ```
 
-5. 问答：
+4. 问答：
 
 ```bash
 python scripts/query_documents.py "RAG 的主要挑战是什么？"
-python scripts/query_documents.py "两篇论文的方法有什么区别？" --mode hybrid
+python scripts/query_documents.py "两篇论文的方法有什么区别？" --retrieval-mode hybrid
 ```
 
-6. 主题总结：
+5. 主题总结：
 
 ```bash
 python scripts/topic_summary.py "Transformer 的核心机制"
@@ -142,7 +139,7 @@ python scripts/topic_summary.py "Transformer 的核心机制"
 ## 当前限制
 
 - PDF 清洗还比较基础，没有做页眉页脚剔除和参考文献去噪
-- LightRAG 和本地 `pgvector` chunk store 仍是两套链路，需要分别建库/建索引
+- 文档抽取变更后，需要手动重建本地向量索引
 - 没有 Web UI
 - 没有评测脚本
 

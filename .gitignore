@@ -26,6 +26,16 @@ dist/
 notes/
 *.log
 
+deepresearch/backend/paper_assistant/data/raw/
+deepresearch/backend/paper_assistant/data/memory/
+deepresearch/backend/paper_assistant/data/processed/
+deepresearch/backend/paper_assistant/data/vector_store/
+deepresearch/backend/paper_assistant/data/rag_store/
+deepresearch/backend/paper_assistant/tmp_test_memory.py
+deepresearch/backend/src/data/
+deepresearch/backend/src/notes/
+deepresearch/frontend/src/assets/research-agent-pixel.svg
+
 paper_assistant/data/raw/
 paper_assistant/data/memory/
 paper_assistant/data/processed/

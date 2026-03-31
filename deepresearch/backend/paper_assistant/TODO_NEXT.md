@@ -56,12 +56,12 @@
   - [x] 清理 CLI 对旧 memory manager 的依赖
   - [x] 避免新人误解为主线 memory 所在
 - [ ] 为仓库补一份统一架构文档
-  - [ ] 明确 `helloagents_deepresearch` 与 `paper_assistant` 的职责边界
+  - [ ] 明确 `deepresearch` 与 `paper_assistant` 的职责边界
   - [ ] 明确 memory 的单一所有权在后端 orchestrator 层
 
 ## chapter14 并行项
 
-- [x] 按 [AGENT_INTEGRATION_PLAN.md](/home/pureayu/code/paper_assistant/AGENT_INTEGRATION_PLAN.md) 推进阶段 1：工具化现有 RAG 内核
+- [x] 按 [AGENT_INTEGRATION_PLAN.md](/home/pureayu/code/ResearchAgent/deepresearch/backend/paper_assistant/AGENT_INTEGRATION_PLAN.md) 推进阶段 1：工具化现有 RAG 内核
 - [x] 设计 `LocalLibrarySearchTool` 输入输出 schema
 - [x] 设计 `LocalLibraryAnswerTool` 输入输出 schema
 - [x] 将现有 `simple` 检索封装为可调用工具接口

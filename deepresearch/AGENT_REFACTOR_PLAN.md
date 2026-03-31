@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This note captures the current understanding of `helloagents_deepresearch/backend/src/agent.py`
+This note captures the current understanding of `deepresearch/backend/src/agent.py`
 and a safe refactor order for the next stage of development.
 
 The immediate goal is not to add new features first. The goal is to make the current

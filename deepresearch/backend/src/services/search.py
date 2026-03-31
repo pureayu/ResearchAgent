@@ -23,15 +23,24 @@ _GLOBAL_SEARCH_TOOL = SearchTool(backend="hybrid")
 _LOCAL_LIBRARY_SEARCH_TOOL = None
 
 
+def _resolve_local_library_root() -> Path:
+    """Resolve the canonical embedded paper_assistant directory."""
+
+    repo_root = Path(__file__).resolve().parents[4]
+    candidate = repo_root / "deepresearch" / "backend" / "paper_assistant"
+    if candidate.exists():
+        return candidate
+    raise RuntimeError("Unable to locate deepresearch/backend/paper_assistant.")
+
+
 def _get_local_library_search_tool():
-    """Lazily import the sibling paper_assistant tool wrapper."""
+    """Lazily import the embedded paper_assistant tool wrapper."""
 
     global _LOCAL_LIBRARY_SEARCH_TOOL
     if _LOCAL_LIBRARY_SEARCH_TOOL is not None:
         return _LOCAL_LIBRARY_SEARCH_TOOL
 
-    repo_root = Path(__file__).resolve().parents[4]
-    paper_assistant_root = repo_root / "paper_assistant"
+    paper_assistant_root = _resolve_local_library_root()
     if str(paper_assistant_root) not in sys.path:
         sys.path.insert(0, str(paper_assistant_root))
 
