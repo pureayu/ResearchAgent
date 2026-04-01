@@ -1,4 +1,4 @@
-"""Compatibility facade exporting the refactored DeepResearchAgent."""
+"""Workflow orchestrators for the deep research backend."""
 
 from orchestrator.deep_research import DeepResearchAgent, run_deep_research
 

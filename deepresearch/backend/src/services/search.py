@@ -7,8 +7,7 @@ import sys
 from pathlib import Path
 from typing import Any, Optional, Tuple
 
-from hello_agents.tools import SearchTool
-
+from agent_runtime.search_adapter import SearchToolAdapter
 from config import Configuration
 from utils import (
     deduplicate_and_format_sources,
@@ -19,7 +18,7 @@ from utils import (
 logger = logging.getLogger(__name__)
 
 MAX_TOKENS_PER_SOURCE = 2000
-_GLOBAL_SEARCH_TOOL = SearchTool(backend="hybrid")
+_GLOBAL_SEARCH_TOOL = SearchToolAdapter(backend="hybrid")
 _LOCAL_LIBRARY_SEARCH_TOOL = None
 
 

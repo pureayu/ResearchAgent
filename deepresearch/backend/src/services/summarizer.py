@@ -5,8 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterator
 from typing import Tuple
 
-from hello_agents import ToolAwareSimpleAgent
-
+from agent_runtime.interfaces import AgentLike
 from models import SummaryState, TodoItem
 from config import Configuration
 from utils import strip_thinking_tokens
@@ -19,7 +18,7 @@ class SummarizationService:
 
     def __init__(
         self,
-        summarizer_factory: Callable[[], ToolAwareSimpleAgent],
+        summarizer_factory: Callable[[], AgentLike],
         config: Configuration,
     ) -> None:
         self._agent_factory = summarizer_factory

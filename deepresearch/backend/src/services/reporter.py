@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import json
 
-from hello_agents import ToolAwareSimpleAgent
-
+from agent_runtime.interfaces import AgentLike
 from models import SummaryState
 from config import Configuration
 from utils import strip_thinking_tokens
@@ -15,7 +14,7 @@ from services.text_processing import clean_task_summary, dedupe_markdown_blocks,
 class ReportingService:
     """Generates the final structured report."""
 
-    def __init__(self, report_agent: ToolAwareSimpleAgent, config: Configuration) -> None:
+    def __init__(self, report_agent: AgentLike, config: Configuration) -> None:
         self._agent = report_agent
         self._config = config
 

@@ -24,10 +24,7 @@ def main() -> None:
     documents = [item for item in store.load_documents() if item.status in {"processed", "imported"}]
     rag = SimpleVectorRAG(settings)
     count = rag.build_index(documents, rebuild=args.rebuild)
-    if settings.resolved_rag_vector_backend() == "postgres":
-        target = f"PostgreSQL table {settings.rag_chunk_table}"
-    else:
-        target = str(settings.simple_index_file)
+    target = f"PostgreSQL table {settings.rag_chunk_table}"
     print(f"Indexed {count} new chunks into {target}")
 
 

@@ -9,7 +9,7 @@ from pathlib import Path
 from threading import Lock
 from typing import Any, Callable, Optional
 
-from models import SummaryState, TodoItem
+from agent_runtime.tool_protocol import extract_note_id_from_text
 
 logger = logging.getLogger(__name__)
 
@@ -88,22 +88,14 @@ class ToolCallTracker:
     # ------------------------------------------------------------------
     # Draining helpers
     # ------------------------------------------------------------------
-    def drain(self, state: SummaryState, *, step: Optional[int] = None) -> list[dict[str, Any]]:
-        """提取尚未消费的工具调用事件，并同步任务的 note_id。"""
+    def drain(self, *, step: Optional[int] = None) -> list[dict[str, Any]]:
+        """提取尚未消费的工具调用事件。"""
 
         with self._lock:
             if self._cursor >= len(self._events):
                 return []
             new_events = self._events[self._cursor :]
             self._cursor = len(self._events)
-
-        if state.todo_items:
-            for event in new_events:
-                task_id = event.task_id
-                note_id = event.note_id
-                if task_id is None or not note_id:
-                    continue
-                self._attach_note_to_task(state.todo_items, task_id, note_id)
 
         payloads: list[dict[str, Any]] = []
         for event in new_events:
@@ -160,24 +152,6 @@ class ToolCallTracker:
             payload["step"] = step
         return payload
 
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
-    def _attach_note_to_task(self, tasks: list[TodoItem], task_id: int, note_id: str) -> None:
-        """Update matching TODO item with note metadata."""
-
-        for task in tasks:
-            if task.id != task_id:
-                continue
-
-            if task.note_id != note_id:
-                task.note_id = note_id
-                if self._notes_workspace:
-                    task.note_path = str(Path(self._notes_workspace) / f"{note_id}.md")
-            elif task.note_path is None and self._notes_workspace:
-                task.note_path = str(Path(self._notes_workspace) / f"{note_id}.md")
-            break
-
     def _infer_task_id(self, parameters: dict[str, Any]) -> Optional[int]:
         """尝试从工具参数推断 task_id。"""
 
@@ -206,10 +180,4 @@ class ToolCallTracker:
         return None
 
     def _extract_note_id(self, response: str) -> Optional[str]:
-        if not response:
-            return None
-
-        match = re.search(r"ID:\s*([^\n]+)", response)
-        if match:
-            return match.group(1).strip()
-        return None
+        return extract_note_id_from_text(response)

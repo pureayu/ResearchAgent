@@ -1,0 +1,232 @@
+import sys
+import unittest
+from pathlib import Path
+
+
+SRC_ROOT = Path(__file__).resolve().parents[1] / "src"
+if str(SRC_ROOT) not in sys.path:
+    sys.path.insert(0, str(SRC_ROOT))
+
+from config import Configuration
+from execution.special_mode_executor import (
+    RESPONSE_MODE_DEEP_RESEARCH,
+    RESPONSE_MODE_DIRECT_ANSWER,
+    RESPONSE_MODE_MEMORY_RECALL,
+    SpecialModeExecutor,
+)
+from models import SummaryState
+
+
+class StubAgent:
+    def __init__(self, *responses: str) -> None:
+        self._responses = list(responses)
+        self.prompts: list[str] = []
+        self.clear_calls = 0
+
+    def run(self, input_text: str, **_: object) -> str:
+        self.prompts.append(input_text)
+        if self._responses:
+            return self._responses.pop(0)
+        return ""
+
+    def stream_run(self, input_text: str, **_: object):
+        self.prompts.append(input_text)
+        return iter(())
+
+    def clear_history(self) -> None:
+        self.clear_calls += 1
+
+
+class SpecialModeExecutorTests(unittest.TestCase):
+    def _make_executor(
+        self,
+        *,
+        direct_answer_responses: tuple[str, ...] = ("",),
+        classifier_responses: tuple[str, ...] = ("",),
+        selector_responses: tuple[str, ...] = ("",),
+    ) -> SpecialModeExecutor:
+        self.direct_answer_agent = StubAgent(*direct_answer_responses)
+        self.classifier_agent = StubAgent(*classifier_responses)
+        self.selector_agent = StubAgent(*selector_responses)
+        return SpecialModeExecutor(
+            Configuration(strip_thinking_tokens=False),
+            self.direct_answer_agent,
+            self.classifier_agent,
+            self.selector_agent,
+        )
+
+    def test_classify_response_mode_downgrades_direct_answer_without_context(self) -> None:
+        executor = self._make_executor(
+            classifier_responses=(
+                '{"response_mode":"direct_answer","confidence":0.92,"reason":"short question"}',
+            ),
+        )
+
+        mode = executor.classify_response_mode("现在适合买吗", {})
+
+        self.assertEqual(mode, RESPONSE_MODE_DEEP_RESEARCH)
+
+    def test_classify_response_mode_allows_memory_recall_without_history(self) -> None:
+        executor = self._make_executor(
+            classifier_responses=(
+                '{"response_mode":"memory_recall","confidence":0.88,"reason":"asking about history"}',
+            ),
+        )
+
+        mode = executor.classify_response_mode("你还记得我之前说过什么吗", None)
+
+        self.assertEqual(mode, RESPONSE_MODE_MEMORY_RECALL)
+
+    def test_classify_response_mode_accepts_direct_answer_with_global_context(self) -> None:
+        executor = self._make_executor(
+            classifier_responses=(
+                '{"response_mode":"direct_answer","confidence":0.83,"reason":"enough recalled context"}',
+            ),
+        )
+
+        mode = executor.classify_response_mode(
+            "这方案现在适合我吗",
+            {"global_facts": [{"fact_id": "g1", "fact": "延迟和成本通常存在 tradeoff"}]},
+        )
+
+        self.assertEqual(mode, RESPONSE_MODE_DIRECT_ANSWER)
+
+    def test_memory_recall_uses_selector_output(self) -> None:
+        executor = self._make_executor(
+            selector_responses=(
+                '{"run_ids":["run-1"],"task_ids":["101"],"fact_ids":["session-1","profile-1"]}',
+            ),
+        )
+        state = SummaryState(
+            recalled_context={
+                "session_runs": [
+                    {
+                        "run_id": "run-1",
+                        "topic": "RAG 延迟调研",
+                        "finished_at": "2026-03-31T10:00:00+08:00",
+                        "report_excerpt": "延迟与召回质量之间存在明显 tradeoff。",
+                    },
+                    {
+                        "run_id": "run-2",
+                        "topic": "无关主题",
+                        "finished_at": "2026-03-30T10:00:00+08:00",
+                        "report_excerpt": "无关内容",
+                    },
+                ],
+                "recent_tasks": [
+                    {
+                        "run_id": "run-1",
+                        "task_id": 101,
+                        "title": "分析端到端延迟",
+                        "summary": "定位检索和重排的延迟瓶颈。",
+                    },
+                    {
+                        "run_id": "run-2",
+                        "task_id": 202,
+                        "title": "无关任务",
+                        "summary": "不应被选中。",
+                    },
+                ],
+                "session_facts": [
+                    {
+                        "fact_id": "session-1",
+                        "run_id": "run-1",
+                        "fact": "检索质量和延迟之间存在明显 tradeoff。",
+                    },
+                    {
+                        "fact_id": "session-2",
+                        "run_id": "run-2",
+                        "fact": "不应被选中。",
+                    },
+                ],
+                "profile_facts": [
+                    {
+                        "fact_id": "profile-1",
+                        "fact": "用户长期关注端侧部署和延迟。",
+                    }
+                ],
+            }
+        )
+
+        summary, sources_summary, evidence_count = executor._build_memory_recall_answer(
+            state,
+            "你还记得之前关于延迟的研究吗",
+        )
+
+        self.assertIn("RAG 延迟调研", summary)
+        self.assertIn("用户长期关注端侧部署和延迟。", summary)
+        self.assertIn("分析端到端延迟", summary)
+        self.assertNotIn("无关主题", summary)
+        self.assertIn("Source: 用户画像记忆 1", sources_summary)
+        self.assertGreaterEqual(evidence_count, 4)
+
+    def test_memory_recall_selector_fallback_uses_simple_recency(self) -> None:
+        executor = self._make_executor(selector_responses=("not json",))
+        state = SummaryState(
+            recalled_context={
+                "session_runs": [
+                    {
+                        "run_id": "run-1",
+                        "topic": "最近一次研究",
+                        "finished_at": "2026-03-31T10:00:00+08:00",
+                        "report_excerpt": "最近摘要",
+                    }
+                ],
+                "recent_tasks": [
+                    {
+                        "run_id": "run-1",
+                        "task_id": 1,
+                        "title": "最近任务",
+                        "summary": "应被回退带上。",
+                    },
+                    {
+                        "run_id": "run-2",
+                        "task_id": 2,
+                        "title": "更老的任务",
+                        "summary": "不应被带上。",
+                    },
+                ],
+                "session_facts": [{"fact_id": "sf-1", "run_id": "run-1", "fact": "最近结论"}],
+                "profile_facts": [{"fact_id": "pf-1", "fact": "用户偏好中文回答"}],
+            }
+        )
+
+        summary, _, _ = executor._build_memory_recall_answer(state, "还记得最近那次研究吗")
+
+        self.assertIn("最近一次研究", summary)
+        self.assertIn("最近任务", summary)
+        self.assertNotIn("更老的任务", summary)
+        self.assertIn("用户偏好中文回答", summary)
+
+    def test_memory_recall_without_history_returns_fixed_message(self) -> None:
+        executor = self._make_executor()
+
+        summary, sources_summary, evidence_count = executor._build_memory_recall_answer(
+            SummaryState(recalled_context={}),
+            "你还记得我之前说过什么吗",
+        )
+
+        self.assertIn("当前没有找到足够相关的历史研究记录或用户记忆", summary)
+        self.assertEqual(sources_summary, "")
+        self.assertEqual(evidence_count, 0)
+
+    def test_direct_answer_prompt_and_sources_include_global_facts(self) -> None:
+        executor = self._make_executor()
+        state = SummaryState(
+            recalled_context={
+                "profile_facts": [{"fact": "用户偏好简洁回答"}],
+                "global_facts": [{"fact": "压缩模型通常会影响召回质量"}],
+            }
+        )
+
+        prompt = executor._build_direct_answer_prompt(state, "这个方案适合我吗")
+        sources_summary, evidence_count = executor._build_direct_answer_sources(state)
+
+        self.assertIn("跨会话稳定知识", prompt)
+        self.assertIn("压缩模型通常会影响召回质量", prompt)
+        self.assertIn("Source: Global Memory 1", sources_summary)
+        self.assertEqual(evidence_count, 2)
+
+
+if __name__ == "__main__":
+    unittest.main()

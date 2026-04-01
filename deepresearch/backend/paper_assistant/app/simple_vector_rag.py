@@ -14,7 +14,7 @@ from app.embedding_client import EmbeddingClient
 from app.metadata_store import MetadataStore
 from app.models import Citation, DocumentRecord, ProcessedDocument
 from app.pgvector_chunk_store import PGVectorChunkStore
-from app.utils import dump_json, load_json
+from app.utils import load_json
 
 BM25_STOPWORDS = {
     "a",
@@ -49,41 +49,6 @@ BM25_STOPWORDS = {
     "的",
 }
 
-QUERY_EXPANSION_RULES = {
-    "provenance": [
-        "traceable",
-        "citation",
-        "supporting evidence",
-        "decisions",
-    ],
-    "world knowledge": [
-        "updating knowledge",
-        "open research problems",
-    ],
-    "parametric": [
-        "seq2seq",
-        "pre-trained",
-    ],
-    "non-parametric": [
-        "dense vector index",
-        "wikipedia",
-    ],
-    "indiscriminately retrieving": [
-        "fixed number of retrieved passages",
-        "retrieval is necessary",
-        "passages are relevant",
-    ],
-    "versatility": [
-        "unhelpful response generation",
-        "on-demand retrieval",
-    ],
-    "self-reflection": [
-        "reflection tokens",
-        "self-evaluate",
-        "critique",
-    ],
-}
-
 
 class IndexedChunk(BaseModel):
     chunk_uid: str
@@ -112,30 +77,16 @@ class SimpleVectorRAG:
         self.settings = settings
         self.store = MetadataStore(settings.metadata_file, settings.manifest_file)
         self.embedding_client = EmbeddingClient(settings)
-        self.index_file = settings.simple_index_file
-        self.backend = settings.resolved_rag_vector_backend()
-        self.chunk_store = (
-            PGVectorChunkStore(settings)
-            if self.backend == "postgres"
-            else None
-        )
+        self.chunk_store = PGVectorChunkStore(settings)
 
     def build_index(self, documents: list[DocumentRecord], rebuild: bool = False) -> int:
-        if self.chunk_store is not None and rebuild:
+        if rebuild:
             self.chunk_store.reset()
 
         if rebuild:
             existing_chunk_uids: set[str] = set()
-            existing_records: dict[str, IndexedChunk] = {}
-        elif self.chunk_store is not None:
-            existing_chunk_uids = self.chunk_store.load_existing_chunk_uids()
-            existing_records = {}
         else:
-            existing_records = {
-                item.chunk_uid: item
-                for item in self._load_index(include_embeddings=True)
-            }
-            existing_chunk_uids = set(existing_records)
+            existing_chunk_uids = self.chunk_store.load_existing_chunk_uids()
         new_records: list[IndexedChunk] = []
 
         for document in documents:
@@ -165,22 +116,15 @@ class SimpleVectorRAG:
                 )
 
         if not new_records:
-            if rebuild and self.chunk_store is None:
-                dump_json(self.index_file, [])
             return 0
 
         embeddings = self.embedding_client.embed_texts([item.text for item in new_records])
         for record, embedding in zip(new_records, embeddings, strict=True):
             record.embedding = embedding
-            existing_records[record.chunk_uid] = record
 
-        if self.chunk_store is not None:
-            self.chunk_store.upsert_chunks(
-                [item.model_dump(mode="json") for item in new_records]
-            )
-        else:
-            all_records = sorted(existing_records.values(), key=lambda item: item.chunk_uid)
-            dump_json(self.index_file, [item.model_dump(mode="json") for item in all_records])
+        self.chunk_store.upsert_chunks(
+            [item.model_dump(mode="json") for item in new_records]
+        )
         return len(new_records)
 
     def query(
@@ -190,19 +134,14 @@ class SimpleVectorRAG:
         candidate_k: int = 20,
         retrieval_mode: str = "hybrid",
     ) -> list[Citation]:
-        needs_embeddings = self.chunk_store is None and retrieval_mode in {"vector", "hybrid"}
-        records = self._load_index(include_embeddings=needs_embeddings)
+        records = self._load_index()
         if not records:
             return []
 
         query_terms = _tokenize(query)
         if not query_terms:
             return []
-        expanded_query = _expand_query(query)
-        expanded_query_terms = _tokenize(expanded_query)
         bm25_terms = _bm25_terms(query_terms)
-        expanded_bm25_terms = _bm25_terms(expanded_query_terms)
-        has_expansion = expanded_query.strip() != query.strip()
 
         prepared = [_prepare_chunk(record) for record in records]
         merged: dict[str, RetrievalCandidate] = {}
@@ -219,7 +158,7 @@ class SimpleVectorRAG:
 
             if query_embedding:
                 for rank, (record, vector_score) in enumerate(
-                    self._vector_recall(prepared, query_embedding, candidate_k),
+                    self._vector_recall(query_embedding, candidate_k),
                     start=1,
                 ):
                     _accumulate_candidate(
@@ -228,23 +167,6 @@ class SimpleVectorRAG:
                         vector_score=vector_score,
                         fusion_increment=_rrf(rank),
                     )
-
-                if has_expansion:
-                    try:
-                        expanded_query_embedding = self.embedding_client.embed_query(expanded_query)
-                    except Exception:
-                        expanded_query_embedding = []
-                    if expanded_query_embedding:
-                        for rank, (record, vector_score) in enumerate(
-                            self._vector_recall(prepared, expanded_query_embedding, candidate_k),
-                            start=1,
-                        ):
-                            _accumulate_candidate(
-                                merged,
-                                record=record,
-                                vector_score=vector_score,
-                                fusion_increment=_rrf(rank) * 0.6,
-                            )
 
         if retrieval_mode in {"bm25", "hybrid", "hybrid-bm25-fallback"}:
             for rank, (record, bm25_score) in enumerate(
@@ -257,18 +179,6 @@ class SimpleVectorRAG:
                     bm25_score=bm25_score,
                     fusion_increment=_rrf(rank),
                 )
-
-            if has_expansion:
-                for rank, (record, bm25_score) in enumerate(
-                    self._bm25_recall(prepared, expanded_bm25_terms, candidate_k),
-                    start=1,
-                ):
-                    _accumulate_candidate(
-                        merged,
-                        record=record,
-                        bm25_score=bm25_score,
-                        fusion_increment=_rrf(rank) * 0.6,
-                    )
 
         if not merged:
             return []
@@ -291,50 +201,26 @@ class SimpleVectorRAG:
 
     def _load_index(
         self,
-        *,
-        include_embeddings: bool,
         doc_ids: list[str] | None = None,
     ) -> list[IndexedChunk]:
-        if self.chunk_store is not None:
-            payload = self.chunk_store.load_chunks(
-                include_embeddings=include_embeddings,
-                doc_ids=doc_ids,
-            )
-            return [IndexedChunk.model_validate(item) for item in payload]
-
-        payload = load_json(self.index_file, [])
-        records = [IndexedChunk.model_validate(item) for item in payload]
-        if doc_ids:
-            doc_id_set = set(doc_ids)
-            records = [item for item in records if item.doc_id in doc_id_set]
-        if include_embeddings:
-            return records
-        for record in records:
-            record.embedding = []
-        return records
+        payload = self.chunk_store.load_chunks(
+            include_embeddings=False,
+            doc_ids=doc_ids,
+        )
+        return [IndexedChunk.model_validate(item) for item in payload]
 
     def _vector_recall(
         self,
-        prepared: list[tuple[IndexedChunk, Counter[str], int]],
         query_embedding: list[float],
         candidate_k: int,
     ) -> list[tuple[IndexedChunk, float]]:
-        if self.chunk_store is not None:
-            return [
-                (IndexedChunk.model_validate(record), score)
-                for record, score in self.chunk_store.vector_search(
-                    query_embedding,
-                    limit=candidate_k,
-                )
-            ]
-
-        scored: list[tuple[IndexedChunk, float]] = []
-        for record, _, _ in prepared:
-            vector_score = _cosine_similarity(query_embedding, record.embedding)
-            if vector_score > 0:
-                scored.append((record, vector_score))
-        scored.sort(key=lambda item: item[1], reverse=True)
-        return scored[:candidate_k]
+        return [
+            (IndexedChunk.model_validate(record), score)
+            for record, score in self.chunk_store.vector_search(
+                query_embedding,
+                limit=candidate_k,
+            )
+        ]
 
     def _bm25_recall(
         self,
@@ -409,19 +295,6 @@ class SimpleVectorRAG:
 
         candidates.sort(key=lambda item: item.rerank_score, reverse=True)
         return candidates
-
-
-def _cosine_similarity(left: list[float], right: list[float]) -> float:
-    if not left or not right or len(left) != len(right):
-        return 0.0
-    dot = sum(a * b for a, b in zip(left, right, strict=True))
-    left_norm = math.sqrt(sum(a * a for a in left))
-    right_norm = math.sqrt(sum(b * b for b in right))
-    if left_norm == 0 or right_norm == 0:
-        return 0.0
-    return dot / (left_norm * right_norm)
-
-
 def _term_counter(text: str) -> Counter[str]:
     counter: Counter[str] = Counter()
     for term in _tokenize(text):
@@ -582,56 +455,3 @@ def _expand_citation_context(
         else:
             pieces.append(neighbor.text)
     return "\n\n".join(pieces)
-
-
-def _expand_query(query: str) -> str:
-    lower_query = query.lower()
-    additions: list[str] = []
-    for trigger, expansions in QUERY_EXPANSION_RULES.items():
-        if trigger in lower_query:
-            additions.extend(expansions)
-
-    if "knowledge-intensive nlp tasks" in lower_query:
-        additions.extend(
-            [
-                "neurips 2020",
-                "parametric and non-parametric memory",
-            ]
-        )
-
-    if "main challenges of rag" in lower_query or "rag 的主要挑战" in lower_query:
-        additions.extend(
-            [
-                "retrieval noise",
-                "knowledge conflict",
-                "context limits",
-                "citation reliability",
-                "freshness",
-            ]
-        )
-
-    if "两类记忆" in query or "原始 rag" in lower_query or "parametric" in lower_query:
-        additions.extend(
-            [
-                "parametric memory",
-                "non-parametric memory",
-                "knowledge-intensive nlp tasks",
-                "seq2seq model",
-                "dense vector index of wikipedia",
-            ]
-        )
-
-    if ("survey" in lower_query or "综述" in query) and ("阶段" in query or "范式" in query or "划分" in query):
-        additions.extend(
-            [
-                "naive rag",
-                "advanced rag",
-                "modular rag",
-                "paradigms",
-                "evolution through paradigms",
-            ]
-        )
-
-    if not additions:
-        return query
-    return f"{query}\n\nRelated terms: {'; '.join(dict.fromkeys(additions))}"

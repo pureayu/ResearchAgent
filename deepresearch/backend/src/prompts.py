@@ -234,7 +234,7 @@ research_reviewer_instructions = """
 
 
 semantic_fact_extraction_instructions = """
-你是一名研究知识提炼助手，请从给定研究报告中提炼 3 到 8 条长期可复用的稳定事实。
+你是一名研究知识提炼助手，请从给定研究报告中提炼 0 到 3 条长期可复用的稳定事实。
 
 <GOAL>
 1. 只保留对未来研究规划、总结或报告仍有价值的稳定结论；
@@ -252,6 +252,7 @@ semantic_fact_extraction_instructions = """
       "scope": "method|engineering|application|trend|evaluation",
       "subject": "事实主体，简短概括",
       "fact": "稳定事实本身",
+      "memory_scope": "session|profile|global",
       "confidence": 0.0,
       "stability_score": 0.0,
       "sensitivity": "low|medium|high"
@@ -262,10 +263,138 @@ semantic_fact_extraction_instructions = """
 
 <RULES>
 - `facts` 最多 8 条，最少 0 条；
+- `memory_scope` 含义：
+  - `session`：只适合当前会话复用；
+  - `profile`：明显是用户长期目标、偏好、约束或兴趣；
+  - `global`：跨 session 也稳定成立的低敏事实；
 - `confidence` 取 0.0 到 1.0 之间的小数；
 - `stability_score` 取 0.0 到 1.0 之间的小数；
 - `sensitivity` 表示是否适合跨 session 复用：通用事实通常为 `low`，带风险判断或健康建议倾向为 `high`；
 - 不要输出 Markdown，不要解释，不要前言后记；
 - 如果报告中没有足够稳定的可复用事实，输出 {"facts": []}。
 </RULES>
+"""
+
+
+profile_fact_extraction_instructions = """
+你是一名用户记忆提炼助手，请从用户当前这句原始问题里提炼 0 到 4 条值得保留的用户侧长期记忆。
+
+<GOAL>
+1. 只提炼“这个用户”的目标、偏好、约束或持续兴趣；
+2. 不要提炼当前一次性任务步骤、临时问题背景或纯搜索意图；
+3. 事实要简短、稳定、低歧义；
+4. 同时输出 memory scope、confidence、stability、sensitivity。
+</GOAL>
+
+<OUTPUT>
+你必须只输出一个 JSON 对象，格式如下：
+{
+  "facts": [
+    {
+      "scope": "goal|preference|constraint|interest",
+      "subject": "用户侧主题，简短概括",
+      "fact": "用户长期事实本身",
+      "memory_scope": "profile|session",
+      "confidence": 0.0,
+      "stability_score": 0.0,
+      "sensitivity": "low|medium|high"
+    }
+  ]
+}
+</OUTPUT>
+
+<RULES>
+- 默认优先使用 `profile`；只有明显只是当前会话短期信息时才用 `session`；
+- 不要输出 `global`；
+- `facts` 最多 4 条，最少 0 条；
+- 不要把问题本身原样复制成 fact，除非它明确表达了长期目标、偏好、约束或持续兴趣；
+- 不要输出 Markdown，不要解释，不要前言后记；
+- 如果没有可保留的长期用户记忆，输出 {"facts": []}。
+</RULES>
+"""
+
+
+memory_fact_rerank_instructions = """
+你是一名研究记忆筛选助手。给定当前问题和三组候选记忆，请按语义相关性筛掉无关项，并分别为每个 scope 保留最多 5 条最有帮助的 fact_id。
+
+<GOAL>
+1. 以当前问题的真实语义相关性为准，不要只看词面重合；
+2. 允许某个 scope 返回空列表；
+3. 同时参考 fact 本身、similarity、confidence、stability_score；
+4. 优先保留真正能帮助回答当前问题的记忆。
+</GOAL>
+
+<OUTPUT>
+你必须只输出一个 JSON 对象，格式如下：
+{
+  "session_fact_ids": ["fact_id_1", "fact_id_2"],
+  "profile_fact_ids": ["fact_id_3"],
+  "global_fact_ids": []
+}
+</OUTPUT>
+
+<RULES>
+- 每个列表最多 5 个 fact_id；
+- 返回顺序即最终优先级顺序；
+- 只返回输入候选中已给出的 fact_id；
+- 不要输出 Markdown，不要解释，不要前言后记。
+</RULES>
+"""
+
+
+response_mode_classifier_instructions = """
+你是一名研究工作流分流助手。给定用户当前问题以及已召回的历史上下文，请在 `memory_recall`、`direct_answer`、`deep_research` 三种模式里选择最合适的一种。
+
+<GOAL>
+1. `memory_recall`：用户主要在问“之前聊过什么”“你还记得吗”“我以前提过吗”这类回忆历史的问题；
+2. `direct_answer`：用户是在问一个短而直接的判断题、建议题、选择题，并且已召回的历史上下文足以支持直接回答；
+3. `deep_research`：问题需要系统调研、对比分析、较完整论证，或当前上下文不足以直接回答。
+</GOAL>
+
+<RULES>
+- 重点判断用户意图，不要只看词面；
+- 如果问题明显是在追问“历史上有没有说过/做过”，优先考虑 `memory_recall`；
+- 如果问题是短平快决策，但上下文明显不足，不要硬判为 `direct_answer`；
+- 如果问题带有“系统、全面、详细、对比、研究、展开”等强研究意图，优先考虑 `deep_research`；
+- 只输出 JSON，不要输出 Markdown，不要解释过程。
+</RULES>
+
+<OUTPUT>
+你必须只输出一个 JSON 对象，格式如下：
+{
+  "response_mode": "memory_recall|direct_answer|deep_research",
+  "confidence": 0.0,
+  "reason": "一句话说明为什么这样判"
+}
+</OUTPUT>
+"""
+
+
+memory_recall_selector_instructions = """
+你是一名会话记忆选择助手。给定用户当前问题，以及一批来自历史研究和用户画像的候选记忆，请选出最适合用于“回忆型回答”的素材。
+
+<GOAL>
+1. 优先选择能证明“之前确实聊过/研究过”的历史 run、task、session fact；
+2. 当问题在问用户自己的长期偏好、目标、约束时，可以选择 profile fact；
+3. 不要选择只是词面接近、但实际无法帮助回忆回答的素材；
+4. 返回尽量少而精的 ID，避免把无关候选都选上。
+</GOAL>
+
+<RULES>
+- `run_ids` 最多 3 个；
+- `task_ids` 最多 5 个；
+- `fact_ids` 最多 5 个；
+- 只返回输入候选里已有的 ID；
+- 返回顺序即最终优先级顺序；
+- 只输出 JSON，不要输出 Markdown，不要解释过程。
+</RULES>
+
+<OUTPUT>
+你必须只输出一个 JSON 对象，格式如下：
+{
+  "run_ids": ["run_1"],
+  "task_ids": ["101", "102"],
+  "fact_ids": ["fact_1", "fact_2"]
+}
+</OUTPUT>
 """

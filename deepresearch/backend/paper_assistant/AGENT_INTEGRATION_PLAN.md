@@ -17,8 +17,6 @@
 - chunking 与 metadata 管理
 - 单一本地检索后端：`simple`
 - `bm25 / vector / hybrid`
-- controlled query expansion
-- dual-query retrieval
 - citation / snippet / full chunk 上下文组装
 
 ### 评测与工程能力

@@ -4,11 +4,10 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 from typing import Any, List, Optional
 
-from hello_agents import ToolAwareSimpleAgent
-
+from agent_runtime.interfaces import AgentLike
+from agent_runtime.tool_protocol import extract_tool_calls, parse_tool_payload_body
 from models import SummaryState, TodoItem
 from config import Configuration
 from prompts import get_current_date, todo_planner_instructions
@@ -19,7 +18,7 @@ logger = logging.getLogger(__name__)
 class PlanningService:
     """Wraps the planner agent to produce structured TODO items."""
 
-    def __init__(self, planner_agent: ToolAwareSimpleAgent, config: Configuration) -> None:
+    def __init__(self, planner_agent: AgentLike, config: Configuration) -> None:
         self._agent = planner_agent
         self._config = config
 
@@ -222,75 +221,7 @@ class PlanningService:
     def _extract_tool_calls(self, text: str) -> list[tuple[str, str]]:
         """Extract TOOL_CALL entries while tolerating JSON arrays in the payload."""
 
-        calls: list[tuple[str, str]] = []
-        marker = "[TOOL_CALL:"
-        cursor = 0
-
-        while True:
-            start = text.find(marker, cursor)
-            if start == -1:
-                break
-
-            tool_start = start + len(marker)
-            colon = text.find(":", tool_start)
-            if colon == -1:
-                break
-
-            tool_name = text[tool_start:colon].strip()
-            body_start = colon + 1
-
-            if body_start >= len(text):
-                break
-
-            if text[body_start] == "{":
-                body_end = self._find_matching_brace(text, body_start)
-                if body_end is None:
-                    cursor = body_start
-                    continue
-                body = text[body_start : body_end + 1]
-                closing = text.find("]", body_end + 1)
-                cursor = closing + 1 if closing != -1 else body_end + 1
-            else:
-                closing = text.find("]", body_start)
-                if closing == -1:
-                    break
-                body = text[body_start:closing]
-                cursor = closing + 1
-
-            calls.append((tool_name, body))
-
-        return calls
-
-    @staticmethod
-    def _find_matching_brace(text: str, start: int) -> Optional[int]:
-        """Return the index of the matching closing brace for a JSON object."""
-
-        depth = 0
-        in_string = False
-        escaped = False
-
-        for idx in range(start, len(text)):
-            ch = text[idx]
-
-            if in_string:
-                if escaped:
-                    escaped = False
-                elif ch == "\\":
-                    escaped = True
-                elif ch == '"':
-                    in_string = False
-                continue
-
-            if ch == '"':
-                in_string = True
-            elif ch == "{":
-                depth += 1
-            elif ch == "}":
-                depth -= 1
-                if depth == 0:
-                    return idx
-
-        return None
+        return extract_tool_calls(text)
 
     def _extract_tasks_from_note_tool_calls(self, text: str) -> List[dict[str, Any]]:
         """Recover task definitions from note create calls when final JSON is missing."""
@@ -337,48 +268,7 @@ class PlanningService:
     def _parse_tool_payload_body(self, body: str) -> Optional[dict[str, Any]]:
         """Parse a TOOL_CALL body, tolerating quasi-JSON produced by the LLM."""
 
-        try:
-            payload = json.loads(body)
-            if isinstance(payload, dict):
-                return payload
-        except json.JSONDecodeError:
-            pass
-
-        normalized = re.sub(r'(?<!\\)\n', r"\\n", body)
-        try:
-            payload = json.loads(normalized)
-            if isinstance(payload, dict):
-                return payload
-        except json.JSONDecodeError:
-            pass
-
-        payload: dict[str, Any] = {}
-
-        for key in ("action", "title", "note_type", "content", "note_id"):
-            match = re.search(rf'"{key}"\s*:\s*"(?P<value>.*?)"', body, re.DOTALL)
-            if match:
-                payload[key] = match.group("value").replace("\\n", "\n").strip()
-
-        task_id_match = re.search(r'"task_id"\s*:\s*(\d+)', body)
-        if task_id_match:
-            payload["task_id"] = int(task_id_match.group(1))
-
-        tags_match = re.search(r'"tags"\s*:\s*\[(?P<value>.*?)\]', body, re.DOTALL)
-        if tags_match:
-            payload["tags"] = re.findall(r'"(.*?)"', tags_match.group("value"))
-
-        if payload:
-            return payload
-
-        parts = [segment.strip() for segment in body.split(",") if segment.strip()]
-        loose_payload: dict[str, Any] = {}
-        for part in parts:
-            if "=" not in part:
-                continue
-            key, value = part.split("=", 1)
-            loose_payload[key.strip()] = value.strip().strip('"').strip("'")
-
-        return loose_payload or None
+        return parse_tool_payload_body(body)
 
     def _extract_tasks_from_markdown(self, text: str) -> List[dict[str, Any]]:
         """Fallback parser for markdown tables or numbered task lists."""

@@ -16,12 +16,9 @@ class Settings(BaseModel):
     processed_dir: Path = PROJECT_ROOT / "data" / "processed"
     metadata_dir: Path = PROJECT_ROOT / "data" / "metadata"
     outputs_dir: Path = PROJECT_ROOT / "outputs"
-    vector_store_dir: Path = PROJECT_ROOT / "data" / "vector_store"
     metadata_file: Path = PROJECT_ROOT / "data" / "metadata" / "documents.json"
     manifest_file: Path = PROJECT_ROOT / "data" / "metadata" / "document_manifest.json"
-    simple_index_file: Path = PROJECT_ROOT / "data" / "vector_store" / "simple_chunks.json"
     memory_dir: Path = PROJECT_ROOT / "data" / "memory"
-    rag_vector_backend: str = Field(default_factory=lambda: os.getenv("RAG_VECTOR_BACKEND", "postgres"))
     rag_database_url: str | None = Field(
         default_factory=lambda: (
             os.getenv("RAG_DATABASE_URL")
@@ -50,7 +47,6 @@ class Settings(BaseModel):
             self.processed_dir,
             self.metadata_dir,
             self.outputs_dir,
-            self.vector_store_dir,
             self.memory_dir,
         ):
             path.mkdir(parents=True, exist_ok=True)
@@ -80,19 +76,9 @@ class Settings(BaseModel):
         if missing:
             raise RuntimeError(f"Missing required env vars: {', '.join(missing)}")
 
-    def resolved_rag_vector_backend(self) -> str:
-        backend = (self.rag_vector_backend or "postgres").strip().lower()
-        if backend not in {"postgres", "file"}:
-            raise RuntimeError("RAG_VECTOR_BACKEND must be either 'postgres' or 'file'")
-        return backend
-
-    def resolved_rag_database_url(self) -> str | None:
-        if self.resolved_rag_vector_backend() != "postgres":
-            return None
+    def resolved_rag_database_url(self) -> str:
         if not self.rag_database_url:
-            raise RuntimeError(
-                "RAG_DATABASE_URL is required when RAG_VECTOR_BACKEND=postgres"
-            )
+            raise RuntimeError("RAG_DATABASE_URL is required for the pgvector chunk store")
         return self.rag_database_url
 
     @property

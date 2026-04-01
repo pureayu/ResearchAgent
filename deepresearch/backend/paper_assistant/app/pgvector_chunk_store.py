@@ -31,9 +31,7 @@ class PGVectorChunkStore:
         self.database_url = settings.resolved_rag_database_url()
         self.table_name = settings.rag_chunk_table
         if not self.database_url:
-            raise RuntimeError(
-                "RAG_DATABASE_URL is required when RAG_VECTOR_BACKEND=postgres"
-            )
+            raise RuntimeError("RAG_DATABASE_URL is required for the pgvector chunk store")
         if not _VALID_IDENTIFIER.fullmatch(self.table_name):
             raise RuntimeError(
                 f"Invalid RAG_CHUNK_TABLE value: {self.table_name!r}"

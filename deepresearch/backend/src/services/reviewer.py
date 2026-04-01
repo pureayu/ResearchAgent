@@ -7,8 +7,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
-from hello_agents import ToolAwareSimpleAgent
-
+from agent_runtime.interfaces import AgentLike
 from config import Configuration
 from models import SummaryState
 from prompts import get_current_date, research_reviewer_instructions
@@ -30,7 +29,7 @@ class ResearchReview:
 class ReviewerService:
     """Wraps the reviewer agent to decide whether more research is needed."""
 
-    def __init__(self, reviewer_agent: ToolAwareSimpleAgent, config: Configuration) -> None:
+    def __init__(self, reviewer_agent: AgentLike, config: Configuration) -> None:
         self._agent = reviewer_agent
         self._config = config
 

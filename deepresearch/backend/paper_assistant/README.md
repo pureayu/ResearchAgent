@@ -79,7 +79,6 @@ docker run -d \
 
 默认环境变量：
 
-- `RAG_VECTOR_BACKEND=postgres`
 - `RAG_DATABASE_URL=postgresql://postgres:postgres@localhost:54329/researchagent`
 - `RAG_CHUNK_TABLE=rag_chunks`
 
