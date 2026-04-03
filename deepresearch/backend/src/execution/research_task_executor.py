@@ -6,11 +6,18 @@ from collections.abc import Callable, Iterator
 from dataclasses import replace
 from typing import Any
 
+from capability_types import (
+    DEFAULT_CAPABILITY_CHAIN,
+    INSPECT_GITHUB_REPO_CAPABILITY,
+    SEARCH_ACADEMIC_PAPERS_CAPABILITY,
+    SEARCH_WEB_PAGES_CAPABILITY,
+)
 from config import Configuration
 from execution.evidence_policy import EvidencePolicy, LOCAL_LIBRARY_BACKEND
 from execution.models import ExecutionEvent, TaskExecutionResult, TaskPatch
 from models import SummaryState, TodoItem
-from services.search import dispatch_search, prepare_research_context
+from services.search import dispatch_capability_search, prepare_research_context
+from services.source_routing import SourceRoutingService
 from services.summarizer import SummarizationService
 
 
@@ -21,11 +28,13 @@ class ResearchTaskExecutor:
         self,
         config: Configuration,
         summarizer: SummarizationService,
+        source_routing: SourceRoutingService,
         evidence_policy: EvidencePolicy,
         drain_tool_events: Callable[[int | None], list[dict[str, Any]]],
     ) -> None:
         self._config = config
         self._summarizer = summarizer
+        self._source_routing = source_routing
         self._evidence_policy = evidence_policy
         self._drain_tool_events = drain_tool_events
 
@@ -37,7 +46,7 @@ class ResearchTaskExecutor:
         emit_stream: bool,
         step: int | None = None,
     ) -> Iterator[dict[str, Any]]:
-        """Run local retrieval, optional web follow-up, and task summarization."""
+        """Run multi-source retrieval and task summarization."""
 
         runtime_task = replace(task)
         runtime_task.status = "in_progress"
@@ -74,64 +83,119 @@ class ResearchTaskExecutor:
                         runtime_task.note_path = note_path
             return drained
 
+        route_plan = self._source_routing.plan_capabilities(state.research_topic or task.query, runtime_task)
+        runtime_task.planned_capabilities = list(
+            route_plan.preferred_capabilities or DEFAULT_CAPABILITY_CHAIN
+        )
+        runtime_task.route_intent_label = route_plan.intent_label
+        runtime_task.route_confidence = route_plan.confidence
+        runtime_task.route_reason = route_plan.reason
+
+        yield from emit(
+            {
+                "type": "route_plan",
+                "task_id": runtime_task.id,
+                "intent_label": runtime_task.route_intent_label,
+                "preferred_capabilities": list(runtime_task.planned_capabilities),
+                "confidence": runtime_task.route_confidence,
+                "reason": runtime_task.route_reason,
+            }
+        )
+
         search_result: dict[str, Any] | None = None
         answer_text: str | None = None
-        initial_backend = self._evidence_policy.resolve_initial_backend(task.query)
+        current_query = task.query
+        gap_reason: str | None = None
 
-        yield from emit_many(
-            self._retrieve_local_evidence(
-                state=state,
-                task=runtime_task,
-                backend=initial_backend,
+        for index, capability_id in enumerate(runtime_task.planned_capabilities, start=1):
+            has_next_source = index < len(runtime_task.planned_capabilities)
+            runtime_task.current_capability = capability_id
+
+            if index > 1:
+                runtime_task.needs_followup = True
+                next_query = self._evidence_policy.build_followup_query(
+                    task,
+                    base_query=current_query,
+                    gap_reason=gap_reason or "no_results",
+                    target_capability=capability_id,
+                )
+                runtime_task.latest_query = next_query
+                yield from emit(
+                    {
+                        "type": "query_rewrite",
+                        "task_id": runtime_task.id,
+                        "backend": capability_id,
+                        "current_capability": capability_id,
+                        "planned_capabilities": list(runtime_task.planned_capabilities),
+                        "gap_reason": gap_reason,
+                        "previous_query": current_query,
+                        "rewritten_query": next_query,
+                        "attempt": runtime_task.attempt_count + 1,
+                    }
+                )
+                current_query = next_query
+            else:
+                runtime_task.latest_query = current_query
+
+            yield from emit(
+                self._build_stage_event(
+                    task=runtime_task,
+                    capability_id=capability_id,
+                    query=current_query,
+                )
             )
-        )
-        local_result, local_notices, local_answer, local_backend = dispatch_search(
-            task.query,
-            self._config,
-            state.research_loop_count,
-            backend_override=initial_backend,
-        )
-        runtime_task.attempt_count += 1
-        runtime_task.search_backend = local_backend
-        runtime_task.evidence_count = len((local_result or {}).get("results", []))
-        runtime_task.top_score = self._extract_top_score(local_result)
-        runtime_task.notices = list(local_notices)
 
-        drained = drain_and_capture_tool_events()
-        yield from emit_many(drained)
-        yield from emit(
-            self._build_search_result_event(
+            source_result, source_notices, source_answer, backend_label = dispatch_capability_search(
+                capability_id,
+                current_query,
+                self._config,
+                state.research_loop_count,
                 task=runtime_task,
-                search_result=local_result,
-                backend=local_backend,
-                query=task.query,
             )
-        )
-        yield from emit_many(self._emit_notices(local_notices, runtime_task.id))
+            runtime_task.attempt_count += 1
+            runtime_task.notices.extend(source_notices)
 
-        search_result = local_result
-        answer_text = local_answer
-        backend = local_backend
-        gap_reason = self._should_follow_up(task.query, local_result, local_backend)
-        runtime_task.evidence_gap_reason = gap_reason
+            if source_result and source_result.get("results"):
+                search_result = (
+                    source_result
+                    if search_result is None
+                    else self._merge_search_results(search_result, source_result)
+                )
+                if source_answer and not answer_text:
+                    answer_text = source_answer
+            elif search_result is None:
+                search_result = source_result
 
-        if gap_reason is not None:
-            runtime_task.needs_followup = True
-            followup_result = yield from self._run_web_followup(
-                state=state,
-                task=runtime_task,
-                base_search_result=search_result,
-                base_answer=answer_text,
-                gap_reason=gap_reason,
-                events=emit,
-                drain_and_capture_tool_events=drain_and_capture_tool_events,
+            runtime_task.search_backend = (
+                str(search_result.get("backend") or backend_label) if search_result else backend_label
             )
-            search_result = followup_result["search_result"]
-            answer_text = followup_result["answer_text"]
-            backend = followup_result["backend"]
-        else:
-            runtime_task.needs_followup = False
-            runtime_task.evidence_gap_reason = None
+            runtime_task.evidence_count = len((search_result or {}).get("results", []))
+            runtime_task.top_score = self._extract_top_score(search_result)
+
+            drained = drain_and_capture_tool_events()
+            yield from emit_many(drained)
+            yield from emit(
+                self._build_search_result_event(
+                    task=runtime_task,
+                    search_result=search_result,
+                    backend=backend_label,
+                    query=current_query,
+                )
+            )
+            yield from emit_many(self._emit_notices(source_notices, runtime_task.id))
+
+            gap_reason = self._evidence_policy.assess_evidence_gap(
+                current_query,
+                search_result,
+                capability_id,
+            )
+            gap_reason = self._evidence_policy.finalize_gap_reason(
+                gap_reason,
+                has_next_source=has_next_source,
+            )
+            runtime_task.evidence_gap_reason = gap_reason
+            if gap_reason is None:
+                break
 
         if not search_result or not search_result.get("results"):
             runtime_task.status = "skipped"
@@ -169,13 +233,18 @@ class ResearchTaskExecutor:
                 "task_id": runtime_task.id,
                 "latest_sources": sources_summary,
                 "raw_context": context,
-                "backend": backend,
+                "backend": runtime_task.search_backend,
                 "attempt_count": runtime_task.attempt_count,
                 "evidence_count": runtime_task.evidence_count,
                 "top_score": runtime_task.top_score,
                 "needs_followup": runtime_task.needs_followup,
                 "latest_query": runtime_task.latest_query,
                 "evidence_gap_reason": runtime_task.evidence_gap_reason,
+                "planned_capabilities": list(runtime_task.planned_capabilities),
+                "current_capability": runtime_task.current_capability,
+                "route_intent_label": runtime_task.route_intent_label,
+                "route_confidence": runtime_task.route_confidence,
+                "route_reason": runtime_task.route_reason,
                 "note_id": runtime_task.note_id,
                 "note_path": runtime_task.note_path,
                 **self._evidence_policy.summarize_search_result(search_result),
@@ -211,6 +280,11 @@ class ResearchTaskExecutor:
                 "needs_followup": runtime_task.needs_followup,
                 "latest_query": runtime_task.latest_query,
                 "evidence_gap_reason": runtime_task.evidence_gap_reason,
+                "planned_capabilities": list(runtime_task.planned_capabilities),
+                "current_capability": runtime_task.current_capability,
+                "route_intent_label": runtime_task.route_intent_label,
+                "route_confidence": runtime_task.route_confidence,
+                "route_reason": runtime_task.route_reason,
                 **self._evidence_policy.summarize_search_result(search_result),
             }
         )
@@ -227,143 +301,6 @@ class ResearchTaskExecutor:
             sources_to_append=sources_to_append,
             research_loop_increment=1,
         )
-
-    def _retrieve_local_evidence(
-        self,
-        *,
-        state: SummaryState,
-        task: TodoItem,
-        backend: str,
-    ) -> list[dict[str, Any]]:
-        del state
-        return [
-            {
-                "type": "task_stage",
-                "task_id": task.id,
-                "stage": "retrieving_local"
-                if backend == LOCAL_LIBRARY_BACKEND
-                else "retrieving_web",
-                "backend": backend,
-                "query": task.query,
-                "attempt": task.attempt_count + 1,
-                "previous_backend": task.search_backend,
-                "previous_evidence_count": task.evidence_count,
-                "previous_top_score": task.top_score,
-                "evidence_gap_reason": task.evidence_gap_reason,
-            }
-        ]
-
-    def _should_follow_up(
-        self,
-        query: str,
-        search_result: dict[str, Any] | None,
-        backend: str,
-    ) -> str | None:
-        return self._evidence_policy.assess_evidence_gap(query, search_result, backend)
-
-    def _run_web_followup(
-        self,
-        *,
-        state: SummaryState,
-        task: TodoItem,
-        base_search_result: dict[str, Any] | None,
-        base_answer: str | None,
-        gap_reason: str,
-        events: Callable[[dict[str, Any]], Iterator[dict[str, Any]]],
-        drain_and_capture_tool_events: Callable[[], list[dict[str, Any]]],
-    ) -> Iterator[dict[str, Any]]:
-        search_result = base_search_result
-        answer_text = base_answer
-        backend = task.search_backend or self._evidence_policy.resolve_web_backend()
-        notices = list(task.notices)
-        current_query = task.query
-        web_backend = self._evidence_policy.resolve_web_backend()
-        max_followups = max(1, int(self._config.max_web_research_loops))
-
-        for followup_round in range(1, max_followups + 1):
-            followup_query = self._evidence_policy.build_followup_query(
-                task,
-                base_query=current_query,
-                gap_reason=gap_reason,
-                attempt_index=followup_round,
-            )
-            task.latest_query = followup_query
-
-            yield from events(
-                {
-                    "type": "query_rewrite",
-                    "task_id": task.id,
-                    "backend": web_backend,
-                    "gap_reason": gap_reason,
-                    "previous_query": current_query,
-                    "rewritten_query": followup_query,
-                    "attempt": task.attempt_count + 1,
-                }
-            )
-            yield from events(
-                {
-                    "type": "task_stage",
-                    "task_id": task.id,
-                    "stage": "retrieving_web",
-                    "backend": web_backend,
-                    "query": followup_query,
-                    "attempt": task.attempt_count + 1,
-                    "previous_backend": task.search_backend,
-                    "previous_evidence_count": task.evidence_count,
-                    "previous_top_score": task.top_score,
-                    "evidence_gap_reason": task.evidence_gap_reason,
-                }
-            )
-
-            web_result, web_notices, web_answer, web_backend = dispatch_search(
-                followup_query,
-                self._config,
-                state.research_loop_count,
-                backend_override=web_backend,
-            )
-            task.attempt_count += 1
-            task.notices.extend(web_notices)
-
-            if web_result and web_result.get("results"):
-                search_result = self._merge_search_results(search_result, web_result)
-                notices = list(dict.fromkeys(notices + web_notices))
-                answer_text = web_answer or answer_text
-                backend = str(search_result.get("backend") or web_backend)
-                task.search_backend = backend
-                task.evidence_count = len(search_result.get("results", []))
-                task.top_score = self._extract_top_score(search_result)
-            else:
-                task.search_backend = backend
-                task.evidence_count = len((search_result or {}).get("results", []))
-
-            yield from self._emit_tool_events(drain_and_capture_tool_events, events)
-            yield from events(
-                self._build_search_result_event(
-                    task=task,
-                    search_result=search_result,
-                    backend=backend,
-                    query=followup_query,
-                )
-            )
-            for notice in self._emit_notices(web_notices, task.id):
-                yield from events(notice)
-
-            current_query = followup_query
-            gap_reason = self._evidence_policy.assess_evidence_gap(
-                followup_query,
-                search_result,
-                backend,
-            )
-            task.evidence_gap_reason = gap_reason
-            if gap_reason is None:
-                break
-
-        return {
-            "search_result": search_result,
-            "answer_text": answer_text,
-            "backend": backend,
-            "notices": notices,
-        }
 
     def _build_task_summary(
         self,
@@ -426,6 +363,11 @@ class ResearchTaskExecutor:
             "needs_followup": task.needs_followup,
             "latest_query": task.latest_query,
             "evidence_gap_reason": task.evidence_gap_reason,
+            "planned_capabilities": list(task.planned_capabilities),
+            "current_capability": task.current_capability,
+            "route_intent_label": task.route_intent_label,
+            "route_confidence": task.route_confidence,
+            "route_reason": task.route_reason,
             **self._evidence_policy.summarize_search_result(search_result),
         }
 
@@ -522,6 +464,11 @@ class ResearchTaskExecutor:
             "top_score": task.top_score,
             "needs_followup": task.needs_followup,
             "evidence_gap_reason": task.evidence_gap_reason,
+            "planned_capabilities": list(task.planned_capabilities),
+            "current_capability": task.current_capability,
+            "route_intent_label": task.route_intent_label,
+            "route_confidence": task.route_confidence,
+            "route_reason": task.route_reason,
             **self._evidence_policy.summarize_search_result(search_result),
         }
 
@@ -539,3 +486,36 @@ class ResearchTaskExecutor:
                 }
             )
         return payloads
+
+    @staticmethod
+    def _build_stage_event(
+        *,
+        task: TodoItem,
+        capability_id: str,
+        query: str,
+    ) -> dict[str, Any]:
+        if capability_id == LOCAL_LIBRARY_BACKEND:
+            stage = "retrieving_local"
+        elif capability_id == SEARCH_ACADEMIC_PAPERS_CAPABILITY:
+            stage = "retrieving_academic"
+        elif capability_id == INSPECT_GITHUB_REPO_CAPABILITY:
+            stage = "retrieving_github"
+        elif capability_id == SEARCH_WEB_PAGES_CAPABILITY:
+            stage = "retrieving_web"
+        else:
+            stage = "retrieving_source"
+
+        return {
+            "type": "task_stage",
+            "task_id": task.id,
+            "stage": stage,
+            "backend": capability_id,
+            "query": query,
+            "attempt": task.attempt_count + 1,
+            "previous_backend": task.search_backend,
+            "previous_evidence_count": task.evidence_count,
+            "previous_top_score": task.top_score,
+            "evidence_gap_reason": task.evidence_gap_reason,
+            "planned_capabilities": list(task.planned_capabilities),
+            "current_capability": capability_id,
+        }

@@ -623,6 +623,11 @@ interface TodoTaskView {
   needsFollowup: boolean;
   latestQuery: string;
   evidenceGapReason: string | null;
+  plannedCapabilities: string[];
+  currentCapability: string | null;
+  routeIntentLabel: string | null;
+  routeConfidence: number | null;
+  routeReason: string | null;
   sourceBreakdown: Record<string, number>;
   traceEntries: TaskTraceEntry[];
 }
@@ -1242,6 +1247,23 @@ function upsertTaskMetadata(task: TodoTaskView, payload: Record<string, unknown>
   if (typeof payload.latest_query === "string" && payload.latest_query.trim()) {
     task.latestQuery = payload.latest_query.trim();
   }
+  if (Array.isArray(payload.planned_capabilities)) {
+    task.plannedCapabilities = payload.planned_capabilities.filter(
+      (item): item is string => typeof item === "string" && item.trim().length > 0
+    );
+  }
+  if (typeof payload.current_capability === "string" && payload.current_capability.trim()) {
+    task.currentCapability = payload.current_capability.trim();
+  }
+  if (typeof payload.route_intent_label === "string" && payload.route_intent_label.trim()) {
+    task.routeIntentLabel = payload.route_intent_label.trim();
+  }
+  if (typeof payload.route_confidence === "number") {
+    task.routeConfidence = payload.route_confidence;
+  }
+  if (typeof payload.route_reason === "string" && payload.route_reason.trim()) {
+    task.routeReason = payload.route_reason.trim();
+  }
   if (typeof payload.attempt_count === "number") {
     task.attemptCount = payload.attempt_count;
   }
@@ -1490,6 +1512,28 @@ const submitResearch = async (rawTopic: string) => {
                 typeof item.evidence_gap_reason === "string"
                   ? item.evidence_gap_reason
                   : existing?.evidenceGapReason || null,
+              plannedCapabilities: Array.isArray(item.planned_capabilities)
+                ? item.planned_capabilities.filter(
+                    (value): value is string =>
+                      typeof value === "string" && value.trim().length > 0
+                  )
+                : existing?.plannedCapabilities || [],
+              currentCapability:
+                typeof item.current_capability === "string" && item.current_capability.trim()
+                  ? item.current_capability.trim()
+                  : existing?.currentCapability || null,
+              routeIntentLabel:
+                typeof item.route_intent_label === "string" && item.route_intent_label.trim()
+                  ? item.route_intent_label.trim()
+                  : existing?.routeIntentLabel || null,
+              routeConfidence:
+                typeof item.route_confidence === "number"
+                  ? item.route_confidence
+                  : existing?.routeConfidence || null,
+              routeReason:
+                typeof item.route_reason === "string" && item.route_reason.trim()
+                  ? item.route_reason.trim()
+                  : existing?.routeReason || null,
               sourceBreakdown: existing?.sourceBreakdown || {},
               traceEntries: existing?.traceEntries || []
             } as TodoTaskView;
@@ -1559,6 +1603,10 @@ const submitResearch = async (rawTopic: string) => {
           const stageLabel =
             stage === "retrieving_local"
               ? "本地检索"
+              : stage === "retrieving_academic"
+              ? "学术检索"
+              : stage === "retrieving_github"
+              ? "GitHub 检索"
               : stage === "retrieving_web"
               ? "联网检索"
               : stage;
@@ -1599,6 +1647,20 @@ const submitResearch = async (rawTopic: string) => {
             )
           );
           progressLogs.value.push(`${task.title}：已生成 follow-up query`);
+          if (activeTaskId.value === task.id) {
+            pulse(traceHighlight);
+          }
+          return;
+        }
+
+        if (event.type === "route_plan") {
+          const task = findTask(payloadRecord.task_id);
+          if (!task) {
+            return;
+          }
+
+          upsertTaskMetadata(task, payloadRecord);
+          progressLogs.value.push(`${task.title}：已规划能力链`);
           if (activeTaskId.value === task.id) {
             pulse(traceHighlight);
           }

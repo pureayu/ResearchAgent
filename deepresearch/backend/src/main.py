@@ -142,6 +142,11 @@ def create_app() -> FastAPI:
                 "sources_summary": item.sources_summary,
                 "note_id": item.note_id,
                 "note_path": item.note_path,
+                "planned_capabilities": item.planned_capabilities,
+                "current_capability": item.current_capability,
+                "route_intent_label": item.route_intent_label,
+                "route_confidence": item.route_confidence,
+                "route_reason": item.route_reason,
             }
             for item in result.todo_items
         ]

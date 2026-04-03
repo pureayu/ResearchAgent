@@ -17,6 +17,7 @@ from agent_runtime.roles import (
     REPORTER_ROLE,
     RESPONSE_MODE_CLASSIFIER_ROLE,
     REVIEWER_ROLE,
+    SOURCE_ROUTE_PLANNER_ROLE,
 )
 from agent_runtime.tool_protocol import extract_note_id_from_text
 from config import Configuration
@@ -35,6 +36,7 @@ from services.memory import MemoryService
 from services.planner import PlanningService
 from services.reporter import ReportingService
 from services.reviewer import ReviewerService
+from services.source_routing import SourceRoutingService
 from services.summarizer import SummarizationService
 
 logger = logging.getLogger(__name__)
@@ -63,6 +65,9 @@ class DeepResearchAgent:
         self.memory_recall_selector_agent = self.runtime_factory.create_agent(
             MEMORY_RECALL_SELECTOR_ROLE
         )
+        self.source_route_planner_agent = self.runtime_factory.create_agent(
+            SOURCE_ROUTE_PLANNER_ROLE
+        )
 
         self.planner = PlanningService(self.todo_agent, self.config)
         self.summarizer = SummarizationService(
@@ -71,11 +76,16 @@ class DeepResearchAgent:
         )
         self.reporting = ReportingService(self.report_agent, self.config)
         self.reviewer = ReviewerService(self.review_agent, self.config)
+        self.source_routing = SourceRoutingService(
+            self.source_route_planner_agent,
+            self.config,
+        )
 
         self._evidence_policy = EvidencePolicy(self.config)
         self._research_task_executor = ResearchTaskExecutor(
             self.config,
             self.summarizer,
+            self.source_routing,
             self._evidence_policy,
             self._drain_tool_events,
         )
@@ -229,6 +239,11 @@ class DeepResearchAgent:
                     "round_id": task.round_id,
                     "origin": task.origin,
                     "parent_task_id": task.parent_task_id,
+                    "planned_capabilities": list(task.planned_capabilities),
+                    "current_capability": task.current_capability,
+                    "route_intent_label": task.route_intent_label,
+                    "route_confidence": task.route_confidence,
+                    "route_reason": task.route_reason,
                     "response_mode": state.response_mode,
                 }
 
@@ -254,6 +269,11 @@ class DeepResearchAgent:
                         "note_path": task.note_path,
                         "step": step,
                         "stream_token": task.stream_token,
+                        "planned_capabilities": list(task.planned_capabilities),
+                        "current_capability": task.current_capability,
+                        "route_intent_label": task.route_intent_label,
+                        "route_confidence": task.route_confidence,
+                        "route_reason": task.route_reason,
                         "response_mode": state.response_mode,
                     }
 
@@ -494,6 +514,11 @@ class DeepResearchAgent:
         task.needs_followup = patch.needs_followup
         task.latest_query = patch.latest_query
         task.evidence_gap_reason = patch.evidence_gap_reason
+        task.planned_capabilities = list(patch.planned_capabilities)
+        task.current_capability = patch.current_capability
+        task.route_intent_label = patch.route_intent_label
+        task.route_confidence = patch.route_confidence
+        task.route_reason = patch.route_reason
 
     @staticmethod
     def _apply_tool_event_bindings(
@@ -687,6 +712,11 @@ class DeepResearchAgent:
             "needs_followup": task.needs_followup,
             "latest_query": task.latest_query,
             "evidence_gap_reason": task.evidence_gap_reason,
+            "planned_capabilities": list(task.planned_capabilities),
+            "current_capability": task.current_capability,
+            "route_intent_label": task.route_intent_label,
+            "route_confidence": task.route_confidence,
+            "route_reason": task.route_reason,
         }
 
     def _persist_final_report(self, state: SummaryState, report: str) -> dict[str, Any] | None:

@@ -14,6 +14,10 @@ class SearchAPI(Enum):
     LOCAL_LIBRARY = "local_library"
 
 
+class AcademicSearchProvider(Enum):
+    ARXIV = "arxiv"
+
+
 class Configuration(BaseModel):
     """Configuration options for the deep research assistant."""
 
@@ -46,6 +50,11 @@ class Configuration(BaseModel):
         default=SearchAPI.DUCKDUCKGO,
         title="Search API",
         description="Web search API to use",
+    )
+    academic_search_provider: AcademicSearchProvider = Field(
+        default=AcademicSearchProvider.ARXIV,
+        title="Academic Search Provider",
+        description="Academic search provider used for paper metadata retrieval",
     )
     enable_notes: bool = Field(
         default=True,
@@ -86,6 +95,16 @@ class Configuration(BaseModel):
         default=False,
         title="Use Tool Calling",
         description="Use tool calling instead of JSON mode for structured output",
+    )
+    enable_github_mcp: bool = Field(
+        default=False,
+        title="Enable GitHub MCP",
+        description="Whether to enable the GitHub repo capability backed by MCP.",
+    )
+    github_mcp_server_command: str = Field(
+        default="github-mcp-server",
+        title="GitHub MCP Server Command",
+        description="Command used to launch the local GitHub MCP Server over stdio.",
     )
     llm_api_key: Optional[str] = Field(
         default=None,
@@ -148,7 +167,10 @@ class Configuration(BaseModel):
             "fetch_full_page": os.getenv("FETCH_FULL_PAGE"),
             "strip_thinking_tokens": os.getenv("STRIP_THINKING_TOKENS"),
             "use_tool_calling": os.getenv("USE_TOOL_CALLING"),
+            "enable_github_mcp": os.getenv("ENABLE_GITHUB_MCP"),
+            "github_mcp_server_command": os.getenv("GITHUB_MCP_SERVER_COMMAND"),
             "search_api": os.getenv("SEARCH_API"),
+            "academic_search_provider": os.getenv("ACADEMIC_SEARCH_PROVIDER"),
             "enable_notes": os.getenv("ENABLE_NOTES"),
             "notes_workspace": os.getenv("NOTES_WORKSPACE"),
             "memory_database_url": os.getenv("MEMORY_DATABASE_URL")

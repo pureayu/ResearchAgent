@@ -1,160 +1,41 @@
-"""Search dispatch helpers leveraging HelloAgents SearchTool."""
+"""Search dispatch helpers over capability executors."""
 
 from __future__ import annotations
 
 import logging
-import sys
-from pathlib import Path
 from typing import Any, Optional, Tuple
 
-from agent_runtime.search_adapter import SearchToolAdapter
 from config import Configuration
-from utils import (
-    deduplicate_and_format_sources,
-    format_sources,
-    get_config_value,
-)
+from models import TodoItem
+from services.capabilities import CapabilityExecutor, CapabilityRegistry
+from utils import deduplicate_and_format_sources, format_sources
 
 logger = logging.getLogger(__name__)
 
 MAX_TOKENS_PER_SOURCE = 2000
-_GLOBAL_SEARCH_TOOL = SearchToolAdapter(backend="hybrid")
-_LOCAL_LIBRARY_SEARCH_TOOL = None
 
 
-def _resolve_local_library_root() -> Path:
-    """Resolve the canonical embedded paper_assistant directory."""
-
-    repo_root = Path(__file__).resolve().parents[4]
-    candidate = repo_root / "deepresearch" / "backend" / "paper_assistant"
-    if candidate.exists():
-        return candidate
-    raise RuntimeError("Unable to locate deepresearch/backend/paper_assistant.")
-
-
-def _get_local_library_search_tool():
-    """Lazily import the embedded paper_assistant tool wrapper."""
-
-    global _LOCAL_LIBRARY_SEARCH_TOOL
-    if _LOCAL_LIBRARY_SEARCH_TOOL is not None:
-        return _LOCAL_LIBRARY_SEARCH_TOOL
-
-    paper_assistant_root = _resolve_local_library_root()
-    if str(paper_assistant_root) not in sys.path:
-        sys.path.insert(0, str(paper_assistant_root))
-
-    from app.local_library_tools import LocalLibrarySearchTool
-
-    _LOCAL_LIBRARY_SEARCH_TOOL = LocalLibrarySearchTool()
-    return _LOCAL_LIBRARY_SEARCH_TOOL
-
-
-def _dispatch_local_library_search(query: str) -> dict[str, Any]:
-    """Run the local paper library search and normalize to search-service schema."""
-
-    tool = _get_local_library_search_tool()
-    response = tool.run(
-        {
-            "query": query,
-            "top_k": 5,
-            "retrieval_mode": "hybrid",
-        }
-    )
-
-    results = []
-    for item in response.results:
-        results.append(
-            {
-                "title": item.title,
-                "url": item.filepath,
-                "content": item.snippet,
-                "raw_content": item.content,
-                "score": item.score,
-                "page": item.page,
-                "source_type": "local_library",
-            }
-        )
-
-    return {
-        "results": results,
-        "backend": "local_library",
-        "answer": None,
-        "notices": [],
-    }
-
-
-def dispatch_search(
+def dispatch_capability_search(
+    capability_id: str,
     query: str,
     config: Configuration,
     loop_count: int,
-    backend_override: str | None = None,
+    *,
+    max_results: int = 5,
+    task: TodoItem | None = None,
 ) -> Tuple[dict[str, Any] | None, list[str], Optional[str], str]:
-    """Execute configured search backend and normalise response payload."""
+    """Execute one capability and normalize its payload."""
 
-    search_api = backend_override or get_config_value(config.search_api)
-
-    try:
-        if search_api == "local_library":
-            raw_response = _dispatch_local_library_search(query)
-        else:
-            raw_response = _GLOBAL_SEARCH_TOOL.run(
-                {
-                    "input": query,
-                    "backend": search_api,
-                    "mode": "structured",
-                    "fetch_full_page": config.fetch_full_page,
-                    "max_results": 5,
-                    "max_tokens_per_source": MAX_TOKENS_PER_SOURCE,
-                    "loop_count": loop_count,
-                }
-            )
-    except Exception as exc:  # pragma: no cover - defensive logging
-        message = str(exc)
-        if "No results found" in message or "搜索失败" in message:
-            logger.warning("Search backend %s returned no results: %s", search_api, exc)
-            raw_response = {
-                "results": [],
-                "backend": search_api,
-                "answer": None,
-                "notices": [message],
-            }
-        else:
-            logger.exception("Search backend %s failed: %s", search_api, exc)
-            raise
-    
-    #如果传入的是字符串则结构化成字典
-    if isinstance(raw_response, str):
-        notices = [raw_response]
-        logger.warning("Search backend %s returned text notice: %s", search_api, raw_response)
-        payload: dict[str, Any] = {
-            "results": [],
-            "backend": search_api,
-            "answer": None,
-            "notices": notices,
-        }
-    else:
-        payload = raw_response
-        notices = list(payload.get("notices") or [])
-
-    _normalize_result_source_types(payload)
-
-    backend_label = str(payload.get("backend") or search_api)
-    answer_text = payload.get("answer")
-    results = payload.get("results", [])
-
-    if notices:
-        for notice in notices:
-            logger.info("Search notice (%s): %s", backend_label, notice)
-
-    logger.info(
-        "Search backend=%s resolved_backend=%s answer=%s results=%s",
-        search_api,
-        backend_label,
-        bool(answer_text),
-        len(results),
+    registry = CapabilityRegistry(config)
+    executor = CapabilityExecutor(registry)
+    return executor.execute(
+        capability_id,
+        query,
+        config,
+        loop_count,
+        max_results=max_results,
+        task=task,
     )
-
-    return payload, notices, answer_text, backend_label
 
 
 def prepare_research_context(
@@ -182,22 +63,6 @@ def prepare_research_context(
     return sources_summary, context
 
 
-def _normalize_result_source_types(payload: dict[str, Any] | None) -> None:
-    """Ensure every search result carries a stable source_type for downstream consumers."""
-
-    if not payload:
-        return
-
-    backend = str(payload.get("backend") or "")
-    default_type = "local_library" if backend == "local_library" else "web_search"
-
-    results = payload.get("results") or []
-    for item in results:
-        if not isinstance(item, dict):
-            continue
-        item.setdefault("source_type", default_type)
-
-
 def _format_source_type_summary(search_result: dict[str, Any] | None) -> str:
     """Return a short, human-readable source type summary."""
 
@@ -213,17 +78,19 @@ def _format_source_type_summary(search_result: dict[str, Any] | None) -> str:
         return ""
 
     label_map = {
-        "local_library": "本地文献",
+        "local_library": "本地资料库",
+        "academic": "学术论文",
+        "github": "GitHub 仓库",
         "web_search": "联网网页",
     }
 
     ordered = []
-    for key in ("local_library", "web_search"):
+    for key in ("local_library", "academic", "github", "web_search"):
         if key in counts:
             ordered.append(f"- {label_map.get(key, key)}：{counts[key]}")
 
     for key, value in counts.items():
-        if key in {"local_library", "web_search"}:
+        if key in {"local_library", "academic", "github", "web_search"}:
             continue
         ordered.append(f"- {label_map.get(key, key)}：{value}")
 

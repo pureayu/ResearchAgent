@@ -11,6 +11,7 @@ from prompts import (
     research_reviewer_system_prompt,
     report_writer_instructions,
     response_mode_classifier_instructions,
+    source_route_planner_system_prompt,
     task_summarizer_instructions,
     todo_planner_system_prompt,
 )
@@ -36,6 +37,7 @@ SUMMARIZER_ROLE = "summarizer"
 DIRECT_ANSWER_ROLE = "direct_answer"
 RESPONSE_MODE_CLASSIFIER_ROLE = "response_mode_classifier"
 MEMORY_RECALL_SELECTOR_ROLE = "memory_recall_selector"
+SOURCE_ROUTE_PLANNER_ROLE = "source_route_planner"
 
 
 ROLE_SPECS: dict[str, AgentSpec] = {
@@ -77,6 +79,13 @@ ROLE_SPECS: dict[str, AgentSpec] = {
         role_id=MEMORY_RECALL_SELECTOR_ROLE,
         display_name="会话记忆选择器",
         system_prompt=memory_recall_selector_instructions.strip(),
+        use_tools=False,
+        use_notes=False,
+    ),
+    SOURCE_ROUTE_PLANNER_ROLE: AgentSpec(
+        role_id=SOURCE_ROUTE_PLANNER_ROLE,
+        display_name="来源路由规划器",
+        system_prompt=source_route_planner_system_prompt.strip(),
         use_tools=False,
         use_notes=False,
     ),

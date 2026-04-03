@@ -34,6 +34,7 @@ deepresearch/backend/paper_assistant/data/rag_store/
 deepresearch/backend/paper_assistant/tmp_test_memory.py
 deepresearch/backend/src/data/
 deepresearch/backend/src/notes/
+deepresearch/backend/data/
 deepresearch/frontend/src/assets/research-agent-pixel.svg
 
 paper_assistant/data/raw/

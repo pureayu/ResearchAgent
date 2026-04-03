@@ -32,6 +32,11 @@ class TaskPatch:
     needs_followup: bool = False
     latest_query: str | None = None
     evidence_gap_reason: str | None = None
+    planned_capabilities: list[str] = field(default_factory=list)
+    current_capability: str | None = None
+    route_intent_label: str | None = None
+    route_confidence: float = 0.0
+    route_reason: str | None = None
 
     @classmethod
     def from_task(cls, task: TodoItem) -> "TaskPatch":
@@ -51,6 +56,11 @@ class TaskPatch:
             needs_followup=task.needs_followup,
             latest_query=task.latest_query,
             evidence_gap_reason=task.evidence_gap_reason,
+            planned_capabilities=list(task.planned_capabilities),
+            current_capability=task.current_capability,
+            route_intent_label=task.route_intent_label,
+            route_confidence=task.route_confidence,
+            route_reason=task.route_reason,
         )
 
 

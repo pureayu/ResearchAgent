@@ -32,6 +32,11 @@ class TodoItem:
     needs_followup: bool = field(default=False)
     latest_query: Optional[str] = field(default=None)
     evidence_gap_reason: Optional[str] = field(default=None)
+    planned_capabilities: list[str] = field(default_factory=list)
+    current_capability: Optional[str] = field(default=None)
+    route_intent_label: Optional[str] = field(default=None)
+    route_confidence: float = field(default=0.0)
+    route_reason: Optional[str] = field(default=None)
 
 
 @dataclass(kw_only=True)

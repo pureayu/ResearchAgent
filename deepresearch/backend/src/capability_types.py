@@ -1,0 +1,16 @@
+"""Shared capability identifiers for deep research execution."""
+
+from __future__ import annotations
+
+SEARCH_LOCAL_DOCS_CAPABILITY = "search_local_docs"
+SEARCH_ACADEMIC_PAPERS_CAPABILITY = "search_academic_papers"
+SEARCH_WEB_PAGES_CAPABILITY = "search_web_pages"
+INSPECT_GITHUB_REPO_CAPABILITY = "inspect_github_repo"
+
+DEFAULT_CAPABILITY_CHAIN = [
+    SEARCH_LOCAL_DOCS_CAPABILITY,
+    SEARCH_ACADEMIC_PAPERS_CAPABILITY,
+    SEARCH_WEB_PAGES_CAPABILITY,
+]
+
+VALID_CAPABILITY_IDS = set(DEFAULT_CAPABILITY_CHAIN + [INSPECT_GITHUB_REPO_CAPABILITY])
