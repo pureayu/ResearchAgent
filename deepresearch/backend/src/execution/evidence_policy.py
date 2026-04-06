@@ -126,7 +126,26 @@ class EvidencePolicy:
 
         compact_intent = re.sub(r"\s+", " ", f"{task.title} {task.intent}".strip())
         compact_intent = compact_intent[:120].strip()
-        use_chinese = self._contains_cjk(base_query) or self._contains_cjk(compact_intent)
+
+        if gap_reason == "no_results":
+            seed = self._select_seed_query(
+                base_query=base_query,
+                compact_intent=compact_intent,
+                target_capability=target_capability,
+            )
+        else:
+            if (
+                target_capability == SEARCH_ACADEMIC_PAPERS_CAPABILITY
+                and self._contains_latin(base_query)
+                and self._contains_cjk(compact_intent)
+            ):
+                # Keep arXiv queries in the planner-provided language instead of
+                # mixing Chinese intent text into English keyword queries.
+                seed = base_query
+            else:
+                seed = f"{base_query} {compact_intent}".strip()
+
+        use_chinese = self._contains_cjk(seed) and not self._contains_latin(seed)
 
         if target_capability == SEARCH_ACADEMIC_PAPERS_CAPABILITY:
             suffix = (
@@ -148,11 +167,6 @@ class EvidencePolicy:
             )
         else:
             suffix = ""
-
-        if gap_reason == "no_results":
-            seed = compact_intent or base_query
-        else:
-            seed = f"{base_query} {compact_intent}".strip()
 
         return re.sub(r"\s+", " ", f"{seed}{suffix}".strip())
 
@@ -195,3 +209,33 @@ class EvidencePolicy:
     @staticmethod
     def _contains_cjk(text: str) -> bool:
         return bool(re.search(r"[\u4e00-\u9fff]", text or ""))
+
+    @staticmethod
+    def _contains_latin(text: str) -> bool:
+        return bool(re.search(r"[A-Za-z]", text or ""))
+
+    def _select_seed_query(
+        self,
+        *,
+        base_query: str,
+        compact_intent: str,
+        target_capability: str,
+    ) -> str:
+        """Choose the most retrieval-friendly seed when previous source had no results."""
+
+        normalized_base = re.sub(r"\s+", " ", (base_query or "").strip())
+        normalized_intent = re.sub(r"\s+", " ", (compact_intent or "").strip())
+
+        if target_capability == SEARCH_ACADEMIC_PAPERS_CAPABILITY:
+            if self._contains_latin(normalized_base):
+                return normalized_base
+            if self._contains_latin(normalized_intent):
+                return normalized_intent
+            return normalized_intent or normalized_base
+
+        if self._contains_latin(normalized_base) and not self._contains_latin(
+            normalized_intent
+        ):
+            return normalized_base
+
+        return normalized_intent or normalized_base

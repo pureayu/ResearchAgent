@@ -70,7 +70,6 @@ class PlanningService:
             return "无"
 
         session_runs = recalled_context.get("session_runs") or []
-        recent_tasks = recalled_context.get("recent_tasks") or []
         session_facts = recalled_context.get("session_facts") or recalled_context.get("semantic_facts") or []
         profile_facts = recalled_context.get("profile_facts") or []
         global_facts = recalled_context.get("global_facts") or []
@@ -90,18 +89,6 @@ class PlanningService:
                 )
                 if excerpt:
                     lines.append(f"   报告摘要：{excerpt}")
-            sections.append("\n".join(lines))
-
-        if recent_tasks:
-            lines = ["最近任务摘要："]
-            for idx, task in enumerate(recent_tasks[:5], start=1):
-                title = str(task.get("title") or "未知任务").strip()
-                status = str(task.get("status") or "unknown").strip()
-                summary = str(task.get("summary") or "").strip()
-                summary = summary[:160] + ("..." if len(summary) > 160 else "")
-                lines.append(f"{idx}. {title} [{status}]")
-                if summary:
-                    lines.append(f"   摘要：{summary}")
             sections.append("\n".join(lines))
 
         if session_facts:

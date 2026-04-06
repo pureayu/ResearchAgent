@@ -66,6 +66,8 @@ class ReportingService:
         prompt = (
             f"研究主题：{state.research_topic}\n"
             "以下“任务事实表”和“来源事实表”是权威输入，优先级高于任务笔记，不得与其矛盾。\n"
+            "写作时请把它们当作事实校验材料，不要把这些表格原样搬进最终报告。\n"
+            "最终报告应以分析性正文为主，优先用长段落综合论证，而不是把信息拆成许多零碎短点。\n"
             f"任务事实表：\n{authoritative_status_section}\n\n"
             f"来源事实表：\n{authoritative_sources_section}\n\n"
             f"任务概览：\n{''.join(tasks_block)}\n"
@@ -83,11 +85,6 @@ class ReportingService:
 
         report_text = strip_tool_calls(report_text).strip()
         report_text = dedupe_markdown_blocks(report_text)
-        report_text = self._append_authoritative_appendix(
-            report_text,
-            authoritative_status_section=authoritative_status_section,
-            authoritative_sources_section=authoritative_sources_section,
-        )
 
         return report_text or "报告生成失败，请检查输入。"
 

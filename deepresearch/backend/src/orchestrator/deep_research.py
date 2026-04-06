@@ -94,6 +94,7 @@ class DeepResearchAgent:
             self.direct_answer_agent,
             self.response_mode_classifier_agent,
             self.memory_recall_selector_agent,
+            task_log_loader=self.memory_service.load_recent_task_logs,
         )
 
     def run(self, topic: str, session_id: str | None = None) -> SummaryStateOutput:
@@ -147,6 +148,7 @@ class DeepResearchAgent:
         state.structured_report = report
         state.running_summary = report
         self._persist_final_report(state, report)
+        self._capture_profile_memory(state)
         self.memory_service.save_report_memory(state.run_id, state, report)
         if state.response_mode == RESPONSE_MODE_DEEP_RESEARCH:
             self.memory_service.consolidate_semantic_facts(state.run_id, topic, report)
@@ -161,13 +163,26 @@ class DeepResearchAgent:
     def run_stream(self, topic: str, session_id: str | None = None) -> Iterator[dict[str, Any]]:
         """Execute the workflow yielding incremental progress events."""
 
-        state = self._build_state(topic, session_id)
+        state = self._create_state(topic, session_id)
         yield {
             "type": "session",
             "session_id": state.session_id,
             "run_id": state.run_id,
-            "response_mode": state.response_mode,
         }
+        yield {
+            "type": "status",
+            "message": "正在召回历史上下文",
+        }
+        state.recalled_context = self.memory_service.load_relevant_context(
+            state.session_id,
+            topic,
+            exclude_run_id=state.run_id,
+        )
+        yield {
+            "type": "status",
+            "message": "正在判断响应模式",
+        }
+        state.response_mode = self._classify_response_mode(topic, state.recalled_context)
         yield {
             "type": "response_mode",
             "response_mode": state.response_mode,
@@ -179,6 +194,13 @@ class DeepResearchAgent:
             "message": self._initial_status_message(state.response_mode),
             "response_mode": state.response_mode,
         }
+
+        if state.response_mode == RESPONSE_MODE_DEEP_RESEARCH:
+            yield {
+                "type": "status",
+                "message": "正在规划任务",
+                "response_mode": state.response_mode,
+            }
 
         planner_events = self._prepare_tasks(state, stream_mode=True)
         for event in planner_events:
@@ -209,7 +231,7 @@ class DeepResearchAgent:
                 "message": (
                     f"开始第 {current_round} 轮研究"
                     if state.response_mode == RESPONSE_MODE_DEEP_RESEARCH
-                    else "正在结合已召回上下文生成回答"
+                    else "正在检索本地资料并结合已召回上下文生成回答"
                     if state.response_mode == RESPONSE_MODE_DIRECT_ANSWER
                     else "正在整理当前会话中的相关历史记录"
                 ),
@@ -257,7 +279,7 @@ class DeepResearchAgent:
                 except Exception as exc:  # pragma: no cover - defensive guardrail
                     logger.exception("Task execution failed", exc_info=exc)
                     task.status = "failed"
-                    self.memory_service.save_task_memory(state.run_id, task)
+                    self.memory_service.save_task_log(state.run_id, task)
                     yield {
                         "type": "task_status",
                         "task_id": task.id,
@@ -344,6 +366,7 @@ class DeepResearchAgent:
         state.running_summary = report
 
         note_event = self._persist_final_report(state, report)
+        self._capture_profile_memory(state)
         self.memory_service.save_report_memory(state.run_id, state, report)
         if state.response_mode == RESPONSE_MODE_DEEP_RESEARCH:
             yield {
@@ -364,11 +387,14 @@ class DeepResearchAgent:
         }
         yield {"type": "done"}
 
-    def _build_state(self, topic: str, session_id: str | None) -> SummaryState:
+    def _create_state(self, topic: str, session_id: str | None) -> SummaryState:
         state = SummaryState(research_topic=topic)
         state.session_id = self.memory_service.get_or_create_session(session_id, topic)
         state.run_id = self.memory_service.start_run(state.session_id, topic)
-        self.memory_service.capture_profile_memory(state.run_id, state.session_id, topic)
+        return state
+
+    def _build_state(self, topic: str, session_id: str | None) -> SummaryState:
+        state = self._create_state(topic, session_id)
         state.recalled_context = self.memory_service.load_relevant_context(
             state.session_id,
             topic,
@@ -376,6 +402,18 @@ class DeepResearchAgent:
         )
         state.response_mode = self._classify_response_mode(topic, state.recalled_context)
         return state
+
+    def _capture_profile_memory(self, state: SummaryState) -> None:
+        """Persist query-derived profile memory outside the first-response critical path."""
+
+        if not state.run_id or not state.session_id or not state.research_topic:
+            return
+
+        self.memory_service.capture_profile_memory(
+            state.run_id,
+            state.session_id,
+            state.research_topic,
+        )
 
     def _prepare_tasks(
         self,
@@ -497,7 +535,7 @@ class DeepResearchAgent:
                     state.sources_gathered.append(result.sources_to_append)
                 state.research_loop_count += result.research_loop_increment
 
-        self.memory_service.save_task_memory(state.run_id, task)
+        self.memory_service.save_task_log(state.run_id, task)
 
     @staticmethod
     def _apply_task_patch(task: TodoItem, patch: TaskPatch) -> None:
@@ -579,7 +617,7 @@ class DeepResearchAgent:
         return TodoItem(
             id=1,
             title="个性化直接回答",
-            intent="结合当前问题与已召回的长期目标、偏好和会话上下文，给出简洁明确的回答",
+            intent="先检索本地资料库，再结合已召回的长期目标、偏好和会话上下文，给出简洁明确的回答",
             query=state.research_topic,
             origin="direct",
         )
@@ -603,7 +641,7 @@ class DeepResearchAgent:
         if response_mode == RESPONSE_MODE_MEMORY_RECALL:
             return "检测到历史回忆型问题，优先检索会话记忆"
         if response_mode == RESPONSE_MODE_DIRECT_ANSWER:
-            return "检测到可直接回答的问题，正在结合历史上下文生成个性化短答"
+            return "检测到可直接回答的问题，正在检索本地资料并结合历史上下文生成回答"
         return "初始化研究流程"
 
     @staticmethod

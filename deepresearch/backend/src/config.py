@@ -56,6 +56,11 @@ class Configuration(BaseModel):
         title="Academic Search Provider",
         description="Academic search provider used for paper metadata retrieval",
     )
+    academic_search_timeout_seconds: float = Field(
+        default=6.0,
+        title="Academic Search Timeout",
+        description="Timeout in seconds for academic metadata lookups such as arXiv",
+    )
     enable_notes: bool = Field(
         default=True,
         title="Enable Notes",
@@ -70,6 +75,11 @@ class Configuration(BaseModel):
         default=None,
         title="Memory Database URL",
         description="PostgreSQL connection URL for structured research memory persistence",
+    )
+    task_log_retention_per_session: int = Field(
+        default=40,
+        title="Task Log Retention Per Session",
+        description="Maximum number of task-log rows to retain per session",
     )
     fetch_full_page: bool = Field(
         default=True,
@@ -171,10 +181,16 @@ class Configuration(BaseModel):
             "github_mcp_server_command": os.getenv("GITHUB_MCP_SERVER_COMMAND"),
             "search_api": os.getenv("SEARCH_API"),
             "academic_search_provider": os.getenv("ACADEMIC_SEARCH_PROVIDER"),
+            "academic_search_timeout_seconds": os.getenv(
+                "ACADEMIC_SEARCH_TIMEOUT_SECONDS"
+            ),
             "enable_notes": os.getenv("ENABLE_NOTES"),
             "notes_workspace": os.getenv("NOTES_WORKSPACE"),
             "memory_database_url": os.getenv("MEMORY_DATABASE_URL")
             or os.getenv("DATABASE_URL"),
+            "task_log_retention_per_session": os.getenv(
+                "TASK_LOG_RETENTION_PER_SESSION"
+            ),
         }
 
         for key, value in env_aliases.items():

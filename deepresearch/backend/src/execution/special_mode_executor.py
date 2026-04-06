@@ -3,15 +3,17 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import replace
 from datetime import datetime
 from typing import Any
 
 from agent_runtime.interfaces import AgentLike
+from capability_types import SEARCH_LOCAL_DOCS_CAPABILITY
 from config import Configuration
 from execution.models import ExecutionEvent, TaskExecutionResult, TaskPatch
 from models import SummaryState, TodoItem
+from services.search import dispatch_capability_search, prepare_research_context
 from services.text_processing import dedupe_markdown_blocks, strip_tool_calls
 from utils import strip_thinking_tokens
 
@@ -21,9 +23,32 @@ RESPONSE_MODE_DEEP_RESEARCH = "deep_research"
 
 MODE_CLASSIFIER_CONFIDENCE_THRESHOLD = 0.55
 MEMORY_RECALL_RUN_LIMIT = 3
-MEMORY_RECALL_TASK_LIMIT = 5
+MEMORY_RECALL_TASK_LOG_LIMIT = 5
 MEMORY_RECALL_FACT_LIMIT = 5
 MEMORY_RECALL_PROFILE_LIMIT = 3
+RESEARCH_INTENT_KEYWORDS = (
+    "方向",
+    "现状",
+    "趋势",
+    "综述",
+    "梳理",
+    "研究",
+    "对比",
+    "比较",
+    "系统",
+    "全面",
+    "全景",
+    "路径",
+    "进展",
+    "哪些方向",
+    "benchmark",
+    "survey",
+    "overview",
+    "landscape",
+    "roadmap",
+    "state of the art",
+    "sota",
+)
 
 
 class SpecialModeExecutor:
@@ -35,11 +60,13 @@ class SpecialModeExecutor:
         direct_answer_agent: AgentLike,
         response_mode_classifier_agent: AgentLike,
         memory_recall_selector_agent: AgentLike,
+        task_log_loader: Callable[..., list[dict[str, Any]]] | None = None,
     ) -> None:
         self._config = config
         self._direct_answer_agent = direct_answer_agent
         self._response_mode_classifier_agent = response_mode_classifier_agent
         self._memory_recall_selector_agent = memory_recall_selector_agent
+        self._task_log_loader = task_log_loader or self._default_task_log_loader
 
     def execute_memory_recall(
         self,
@@ -64,9 +91,11 @@ class SpecialModeExecutor:
         runtime_task.needs_followup = False
         runtime_task.evidence_gap_reason = None
 
+        recalled_context = self._build_memory_recall_context(state)
         summary, sources_summary, evidence_count = self._build_memory_recall_answer(
             state,
             runtime_task.query,
+            recalled_context=recalled_context,
         )
         runtime_task.summary = summary
         runtime_task.sources_summary = sources_summary
@@ -128,7 +157,7 @@ class SpecialModeExecutor:
         *,
         emit_stream: bool,
     ) -> Iterator[dict[str, Any]]:
-        """Answer short personal questions directly from recalled context."""
+        """Answer short questions from local evidence plus recalled context."""
 
         runtime_task = replace(task)
         local_events: list[ExecutionEvent] = []
@@ -139,27 +168,59 @@ class SpecialModeExecutor:
                 yield payload
 
         runtime_task.latest_query = runtime_task.query
-        runtime_task.search_backend = "direct_answer"
         runtime_task.attempt_count = 1
         runtime_task.needs_followup = False
         runtime_task.evidence_gap_reason = None
 
+        local_result, local_notices, local_answer, backend_label = dispatch_capability_search(
+            SEARCH_LOCAL_DOCS_CAPABILITY,
+            runtime_task.query,
+            self._config,
+            state.research_loop_count,
+            task=runtime_task,
+        )
+        local_sources_summary = ""
+        local_context = ""
+        local_evidence_count = 0
+
+        if local_result and local_result.get("results"):
+            local_sources_summary, local_context = prepare_research_context(
+                local_result,
+                local_answer,
+                self._config,
+            )
+            local_evidence_count = len(local_result.get("results") or [])
+            runtime_task.search_backend = f"{backend_label}+memory"
+            runtime_task.notices = [
+                "本任务先检索本地资料库，再结合已召回上下文生成回答，未进行联网搜索。"
+            ]
+        else:
+            runtime_task.search_backend = "memory"
+            runtime_task.notices = [
+                "本地资料库未命中，已回退为基于已召回上下文的直接回答，未进行联网搜索。"
+            ]
+
+        self._extend_unique_notices(runtime_task.notices, local_notices)
+
         summary, sources_summary, evidence_count = self._build_direct_answer_output(
             state,
             runtime_task.query,
+            local_context=local_context,
         )
         runtime_task.summary = summary
-        runtime_task.sources_summary = sources_summary
-        runtime_task.evidence_count = evidence_count
-        runtime_task.top_score = 1.0 if evidence_count else 0.0
-        runtime_task.notices = ["本任务直接基于已召回的长期目标、偏好与会话上下文生成，未进行联网搜索。"]
+        runtime_task.sources_summary = self._merge_source_sections(
+            local_sources_summary,
+            sources_summary,
+        )
+        runtime_task.evidence_count = local_evidence_count + evidence_count
+        runtime_task.top_score = 1.0 if runtime_task.evidence_count else 0.0
         runtime_task.status = "completed"
 
         yield from emit(
             {
                 "type": "sources",
                 "task_id": runtime_task.id,
-                "latest_sources": sources_summary,
+                "latest_sources": runtime_task.sources_summary,
                 "raw_context": summary,
                 "backend": runtime_task.search_backend,
                 "attempt_count": runtime_task.attempt_count,
@@ -221,6 +282,11 @@ class SpecialModeExecutor:
             return RESPONSE_MODE_DEEP_RESEARCH
         if (
             response_mode == RESPONSE_MODE_DIRECT_ANSWER
+            and self._is_research_intent_topic(topic)
+        ):
+            return RESPONSE_MODE_DEEP_RESEARCH
+        if (
+            response_mode == RESPONSE_MODE_DIRECT_ANSWER
             and not self._has_direct_answer_context(recalled_context)
         ):
             return RESPONSE_MODE_DEEP_RESEARCH
@@ -234,25 +300,30 @@ class SpecialModeExecutor:
             return False
         return bool(
             (recalled_context.get("session_runs") or [])
-            or (recalled_context.get("recent_tasks") or [])
             or (recalled_context.get("session_facts") or recalled_context.get("semantic_facts") or [])
             or (recalled_context.get("profile_facts") or [])
+            or (recalled_context.get("global_facts") or [])
         )
 
     def _build_memory_recall_answer(
         self,
         state: SummaryState,
         query: str,
+        *,
+        recalled_context: dict[str, Any] | None = None,
     ) -> tuple[str, str, int]:
         """Summarize relevant session/profile memory without external search."""
 
-        selected = self._select_memory_recall_items(query, state.recalled_context or {})
+        selected = self._select_memory_recall_items(
+            query,
+            recalled_context or state.recalled_context or {},
+        )
         session_runs = selected["session_runs"]
-        recent_tasks = selected["recent_tasks"]
+        task_logs = selected["task_logs"]
         session_facts = selected["session_facts"]
         profile_facts = selected["profile_facts"]
 
-        if not (session_runs or recent_tasks or session_facts or profile_facts):
+        if not (session_runs or task_logs or session_facts or profile_facts):
             summary = "\n".join(
                 [
                     "# 会话历史回顾",
@@ -274,16 +345,16 @@ class SpecialModeExecutor:
                 f"{idx}. {topic}" + (f"（完成于 {finished_at[:10]}）" if finished_at else "")
             )
 
-        task_lines: list[str] = []
-        for idx, item in enumerate(recent_tasks[:MEMORY_RECALL_TASK_LIMIT], start=1):
+        task_log_lines: list[str] = []
+        for idx, item in enumerate(task_logs[:MEMORY_RECALL_TASK_LOG_LIMIT], start=1):
             title = str(item.get("title") or "").strip()
             summary = str(item.get("summary") or "").strip()
             if not (title or summary):
                 continue
-            line = f"{idx}. {title or '历史任务'}"
+            line = f"{idx}. {title or '任务记录'}"
             if summary:
                 line += f"：{summary[:180]}"
-            task_lines.append(line)
+            task_log_lines.append(line)
 
         session_fact_lines = self._build_fact_lines(
             session_facts[:MEMORY_RECALL_FACT_LIMIT],
@@ -294,7 +365,7 @@ class SpecialModeExecutor:
             prefix="- ",
         )
 
-        has_session_history = bool(run_lines or task_lines or session_fact_lines)
+        has_session_history = bool(run_lines or task_log_lines or session_fact_lines)
         has_profile_memory = bool(profile_fact_lines)
         if has_session_history and has_profile_memory:
             conclusion = "是的，我找到了与你这次问题相关的历史研究记录，也命中了你之前透露过的长期偏好/目标。"
@@ -311,8 +382,8 @@ class SpecialModeExecutor:
         ]
         if run_lines:
             summary_lines.extend(["", "## 相关历史研究", *run_lines])
-        if task_lines:
-            summary_lines.extend(["", "## 相关历史任务", *task_lines])
+        if task_log_lines:
+            summary_lines.extend(["", "## 相关任务记录", *task_log_lines])
         if session_fact_lines:
             summary_lines.extend(["", "## 已沉淀的会话结论", *session_fact_lines])
         if profile_fact_lines:
@@ -333,14 +404,14 @@ class SpecialModeExecutor:
                     f"信息内容: 主题：{str(run.get('topic') or '').strip()}",
                 ]
             )
-        for idx, item in enumerate(recent_tasks[:MEMORY_RECALL_TASK_LIMIT], start=1):
+        for idx, item in enumerate(task_logs[:MEMORY_RECALL_TASK_LOG_LIMIT], start=1):
             title = str(item.get("title") or "").strip()
             summary = str(item.get("summary") or "").strip()
             if not (title or summary):
                 continue
             source_lines.extend(
                 [
-                    f"Source: 历史任务 {idx}",
+                    f"Source: 任务记录 {idx}",
                     f"信息内容: {(title + ' ' + summary[:180]).strip()}",
                 ]
             )
@@ -367,7 +438,7 @@ class SpecialModeExecutor:
 
         evidence_count = (
             len(session_runs[:MEMORY_RECALL_RUN_LIMIT])
-            + len(task_lines)
+            + len(task_log_lines)
             + len(session_fact_lines)
             + len(profile_fact_lines)
         )
@@ -381,14 +452,14 @@ class SpecialModeExecutor:
         """Select memory-recall materials with LLM selection and recency fallback."""
 
         session_runs = list(recalled_context.get("session_runs") or [])
-        recent_tasks = list(recalled_context.get("recent_tasks") or [])
+        task_logs = list(recalled_context.get("task_logs") or [])
         session_facts = list(recalled_context.get("session_facts") or recalled_context.get("semantic_facts") or [])
         profile_facts = list(recalled_context.get("profile_facts") or [])
 
-        if not (session_runs or recent_tasks or session_facts or profile_facts):
+        if not (session_runs or task_logs or session_facts or profile_facts):
             return {
                 "session_runs": [],
-                "recent_tasks": [],
+                "task_logs": [],
                 "session_facts": [],
                 "profile_facts": [],
             }
@@ -398,7 +469,7 @@ class SpecialModeExecutor:
             self._build_memory_recall_selector_input(
                 query,
                 session_runs=session_runs,
-                recent_tasks=recent_tasks,
+                task_logs=task_logs,
                 session_facts=session_facts,
                 profile_facts=profile_facts,
             ),
@@ -407,7 +478,7 @@ class SpecialModeExecutor:
         if selection is None or not any(selection.values()):
             return self._memory_recall_fallback(
                 session_runs=session_runs,
-                recent_tasks=recent_tasks,
+                task_logs=task_logs,
                 session_facts=session_facts,
                 profile_facts=profile_facts,
             )
@@ -419,10 +490,10 @@ class SpecialModeExecutor:
             limit=MEMORY_RECALL_RUN_LIMIT,
         )
         selected_tasks = self._select_items_by_ids(
-            recent_tasks,
+            task_logs,
             selection["task_ids"],
             key="task_id",
-            limit=MEMORY_RECALL_TASK_LIMIT,
+            limit=MEMORY_RECALL_TASK_LOG_LIMIT,
         )
         selected_session_facts = self._select_items_by_ids(
             session_facts,
@@ -459,14 +530,14 @@ class SpecialModeExecutor:
         if not (selected_runs or selected_tasks or selected_session_facts or selected_profile_facts):
             return self._memory_recall_fallback(
                 session_runs=session_runs,
-                recent_tasks=recent_tasks,
+                task_logs=task_logs,
                 session_facts=session_facts,
                 profile_facts=profile_facts,
             )
 
         return {
             "session_runs": selected_runs[:MEMORY_RECALL_RUN_LIMIT],
-            "recent_tasks": selected_tasks[:MEMORY_RECALL_TASK_LIMIT],
+            "task_logs": selected_tasks[:MEMORY_RECALL_TASK_LOG_LIMIT],
             "session_facts": selected_session_facts[:MEMORY_RECALL_FACT_LIMIT],
             "profile_facts": selected_profile_facts[:MEMORY_RECALL_PROFILE_LIMIT],
         }
@@ -475,7 +546,7 @@ class SpecialModeExecutor:
         self,
         *,
         session_runs: list[dict[str, Any]],
-        recent_tasks: list[dict[str, Any]],
+        task_logs: list[dict[str, Any]],
         session_facts: list[dict[str, Any]],
         profile_facts: list[dict[str, Any]],
     ) -> dict[str, list[dict[str, Any]]]:
@@ -489,13 +560,13 @@ class SpecialModeExecutor:
         }
         selected_tasks = [
             item
-            for item in recent_tasks
+            for item in task_logs
             if str(item.get("run_id") or "").strip() in selected_run_ids
-        ][:MEMORY_RECALL_TASK_LIMIT]
+        ][:MEMORY_RECALL_TASK_LOG_LIMIT]
 
         return {
             "session_runs": selected_runs,
-            "recent_tasks": selected_tasks,
+            "task_logs": selected_tasks,
             "session_facts": session_facts[:MEMORY_RECALL_FACT_LIMIT],
             "profile_facts": profile_facts[:MEMORY_RECALL_PROFILE_LIMIT],
         }
@@ -504,10 +575,16 @@ class SpecialModeExecutor:
         self,
         state: SummaryState,
         query: str,
+        *,
+        local_context: str = "",
     ) -> tuple[str, str, int]:
-        """Generate a concise answer grounded in recalled context."""
+        """Generate a concise answer grounded in recalled context and local evidence."""
 
-        prompt = self._build_direct_answer_prompt(state, query)
+        prompt = self._build_direct_answer_prompt(
+            state,
+            query,
+            local_context=local_context,
+        )
         try:
             response = self._direct_answer_agent.run(prompt)
         finally:
@@ -528,7 +605,13 @@ class SpecialModeExecutor:
         sources_summary, evidence_count = self._build_direct_answer_sources(state)
         return answer_text, sources_summary, evidence_count
 
-    def _build_direct_answer_prompt(self, state: SummaryState, query: str) -> str:
+    def _build_direct_answer_prompt(
+        self,
+        state: SummaryState,
+        query: str,
+        *,
+        local_context: str = "",
+    ) -> str:
         """Build the input for the direct-answer agent."""
 
         recalled = state.recalled_context or {}
@@ -552,14 +635,6 @@ class SpecialModeExecutor:
             lambda item: f"- {str(item.get('fact') or '').strip()}",
             "- 暂无跨会话稳定知识",
         )
-        recent_task_block = format_lines(
-            list(recalled.get("recent_tasks") or []),
-            lambda item: (
-                f"- {str(item.get('title') or '').strip()}："
-                f"{str(item.get('summary') or '').strip()[:160]}"
-            ),
-            "- 暂无相关历史任务",
-        )
         session_run_block = format_lines(
             list(recalled.get("session_runs") or []),
             lambda item: (
@@ -570,15 +645,16 @@ class SpecialModeExecutor:
         )
 
         has_context = self._has_direct_answer_context(recalled)
+        local_context_block = local_context.strip() or "暂无命中的本地资料库结果"
 
         return (
             f"当前问题：{query}\n"
             f"是否命中历史上下文：{'是' if has_context else '否'}\n\n"
             "请直接回答用户，不要把自己写成研究报告。\n\n"
+            f"本地资料检索上下文：\n{local_context_block}\n\n"
             f"长期目标/偏好/约束：\n{profile_block}\n\n"
             f"当前会话语义记忆：\n{session_fact_block}\n\n"
             f"跨会话稳定知识：\n{global_fact_block}\n\n"
-            f"最近相关任务：\n{recent_task_block}\n\n"
             f"最近相关研究：\n{session_run_block}\n"
         )
 
@@ -629,19 +705,6 @@ class SpecialModeExecutor:
             )
             evidence_count += 1
 
-        for idx, item in enumerate(recalled.get("recent_tasks") or [], start=1):
-            title = str(item.get("title") or "").strip()
-            summary = str(item.get("summary") or "").strip()
-            if not (title or summary):
-                continue
-            source_lines.extend(
-                [
-                    f"Source: Recent Task {idx}",
-                    f"信息内容: {title} {summary[:180]}".strip(),
-                ]
-            )
-            evidence_count += 1
-
         for idx, item in enumerate(recalled.get("session_runs") or [], start=1):
             topic = str(item.get("topic") or "").strip()
             excerpt = str(item.get("report_excerpt") or "").strip()
@@ -675,14 +738,6 @@ class SpecialModeExecutor:
                 }
                 for item in (recalled.get("session_runs") or [])[:3]
             ],
-            "recent_tasks": [
-                {
-                    "task_id": str(item.get("task_id") or "").strip(),
-                    "title": self._trim_text(item.get("title"), 80),
-                    "summary": self._trim_text(item.get("summary"), 140),
-                }
-                for item in (recalled.get("recent_tasks") or [])[:5]
-            ],
             "session_facts": [
                 {
                     "fact_id": str(item.get("fact_id") or "").strip(),
@@ -712,7 +767,7 @@ class SpecialModeExecutor:
         query: str,
         *,
         session_runs: list[dict[str, Any]],
-        recent_tasks: list[dict[str, Any]],
+        task_logs: list[dict[str, Any]],
         session_facts: list[dict[str, Any]],
         profile_facts: list[dict[str, Any]],
     ) -> str:
@@ -729,14 +784,14 @@ class SpecialModeExecutor:
                 }
                 for item in session_runs[:MEMORY_RECALL_RUN_LIMIT]
             ],
-            "recent_tasks": [
+            "task_logs": [
                 {
                     "task_id": str(item.get("task_id") or "").strip(),
                     "run_id": str(item.get("run_id") or "").strip(),
                     "title": self._trim_text(item.get("title"), 80),
                     "summary": self._trim_text(item.get("summary"), 180),
                 }
-                for item in recent_tasks[:MEMORY_RECALL_TASK_LIMIT]
+                for item in task_logs[:MEMORY_RECALL_TASK_LOG_LIMIT]
             ],
             "session_facts": [
                 {
@@ -824,7 +879,7 @@ class SpecialModeExecutor:
 
         return {
             "run_ids": normalize_ids(payload.get("run_ids"), limit=MEMORY_RECALL_RUN_LIMIT),
-            "task_ids": normalize_ids(payload.get("task_ids"), limit=MEMORY_RECALL_TASK_LIMIT),
+            "task_ids": normalize_ids(payload.get("task_ids"), limit=MEMORY_RECALL_TASK_LOG_LIMIT),
             "fact_ids": normalize_ids(payload.get("fact_ids"), limit=MEMORY_RECALL_FACT_LIMIT),
         }
 
@@ -931,5 +986,51 @@ class SpecialModeExecutor:
             or (recalled_context.get("session_facts") or recalled_context.get("semantic_facts") or [])
             or (recalled_context.get("global_facts") or [])
             or (recalled_context.get("session_runs") or [])
-            or (recalled_context.get("recent_tasks") or [])
         )
+
+    def _build_memory_recall_context(self, state: SummaryState) -> dict[str, Any]:
+        """Build an explicit recall context without mutating the default state context."""
+
+        recalled_context = dict(state.recalled_context or {})
+        task_logs = self._task_log_loader(
+            state.session_id,
+            exclude_run_id=state.run_id,
+            limit=MEMORY_RECALL_TASK_LOG_LIMIT,
+        )
+        if task_logs:
+            recalled_context["task_logs"] = task_logs
+        return recalled_context
+
+    @staticmethod
+    def _default_task_log_loader(
+        _session_id: str | None,
+        *,
+        exclude_run_id: str | None = None,
+        limit: int = MEMORY_RECALL_TASK_LOG_LIMIT,
+    ) -> list[dict[str, Any]]:
+        """Default no-op task-log loader used when no backend is injected."""
+
+        del exclude_run_id, limit
+        return []
+
+    @staticmethod
+    def _is_research_intent_topic(topic: str) -> bool:
+        normalized = str(topic or "").strip().lower()
+        if not normalized:
+            return False
+        return any(keyword in normalized for keyword in RESEARCH_INTENT_KEYWORDS)
+
+    @staticmethod
+    def _merge_source_sections(*sections: str) -> str:
+        chunks = [section.strip() for section in sections if section and section.strip()]
+        return "\n\n".join(chunks)
+
+    @staticmethod
+    def _extend_unique_notices(existing: list[str], additions: list[str]) -> None:
+        seen = {item for item in existing if item}
+        for notice in additions:
+            normalized = str(notice or "").strip()
+            if not normalized or normalized in seen:
+                continue
+            existing.append(normalized)
+            seen.add(normalized)

@@ -9,6 +9,7 @@ if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
 from config import Configuration
+from models import TodoItem
 from services.memory import HIGH_SENSITIVITY
 from services.memory import PROFILE_MEMORY_SCOPE
 from services.memory import SESSION_MEMORY_SCOPE
@@ -61,8 +62,16 @@ class FakeResult:
 
 
 class RecordingConnection:
-    def __init__(self, *, existing_fact=None) -> None:
+    def __init__(
+        self,
+        *,
+        existing_fact=None,
+        query_rows: dict[str, list[dict[str, object]]] | None = None,
+        query_one: dict[str, dict[str, object]] | None = None,
+    ) -> None:
         self.existing_fact = existing_fact
+        self.query_rows = query_rows or {}
+        self.query_one = query_one or {}
         self.statements: list[tuple[str, object]] = []
         self.committed = False
 
@@ -71,6 +80,12 @@ class RecordingConnection:
         self.statements.append((normalized, params))
         if normalized.startswith("SELECT fact_id FROM semantic_facts"):
             return FakeResult(one=self.existing_fact)
+        for prefix, row in self.query_one.items():
+            if normalized.startswith(prefix):
+                return FakeResult(one=row)
+        for prefix, rows in self.query_rows.items():
+            if normalized.startswith(prefix):
+                return FakeResult(rows=rows)
         return FakeResult(rows=[])
 
     def commit(self) -> None:
@@ -105,6 +120,53 @@ class StubMemoryService(MemoryService):
 
     def _embed_texts(self, texts: list[str]) -> list[list[float]]:
         return self._embeddings[: len(texts)]
+
+
+class ContextStubMemoryService(StubMemoryService):
+    def __init__(
+        self,
+        *,
+        session_candidates: list[dict[str, object]] | None = None,
+        profile_candidates: list[dict[str, object]] | None = None,
+        global_candidates: list[dict[str, object]] | None = None,
+        connection: RecordingConnection | None = None,
+    ) -> None:
+        super().__init__(connection=connection)
+        self._session_candidates = session_candidates or []
+        self._profile_candidates = profile_candidates or []
+        self._global_candidates = global_candidates or []
+
+    def _search_semantic_facts(
+        self,
+        connection,
+        topic: str,
+        *,
+        run_ids=None,
+        memory_scope=None,
+        limit=5,
+    ):
+        del connection, topic, run_ids, limit
+        if memory_scope == SESSION_MEMORY_SCOPE:
+            return list(self._session_candidates)
+        if memory_scope == PROFILE_MEMORY_SCOPE:
+            return list(self._profile_candidates)
+        return list(self._global_candidates)
+
+    def _rerank_recalled_facts(
+        self,
+        topic: str,
+        *,
+        session_candidates,
+        profile_candidates,
+        global_candidates,
+        limit=5,
+    ):
+        del topic, limit
+        return {
+            "session_facts": list(session_candidates),
+            "profile_facts": list(profile_candidates),
+            "global_facts": list(global_candidates),
+        }
 
 
 class MemoryServiceTests(unittest.TestCase):
@@ -243,6 +305,91 @@ class MemoryServiceTests(unittest.TestCase):
         executed_sql = [sql for sql, _ in connection.statements]
         self.assertTrue(any(sql.startswith("UPDATE semantic_facts SET") for sql in executed_sql))
         self.assertFalse(any(sql.startswith("INSERT INTO semantic_facts") for sql in executed_sql))
+        self.assertTrue(connection.committed)
+
+    def test_load_relevant_context_excludes_recent_tasks_from_default_context(self) -> None:
+        connection = RecordingConnection(
+            query_rows={
+                "SELECT run_id, session_id, topic, started_at, finished_at, final_report, task_count FROM research_runs": [
+                    {
+                        "run_id": "run-1",
+                        "session_id": "session-1",
+                        "topic": "端侧推理调研",
+                        "started_at": "2026-04-01T10:00:00+00:00",
+                        "finished_at": "2026-04-01T11:00:00+00:00",
+                        "final_report": "报告正文",
+                        "task_count": 3,
+                    }
+                ]
+            }
+        )
+        service = ContextStubMemoryService(
+            session_candidates=[{"fact_id": "sf-1", "fact": "会话结论"}],
+            profile_candidates=[{"fact_id": "pf-1", "fact": "用户偏好中文"}],
+            global_candidates=[{"fact_id": "gf-1", "fact": "全局稳定知识"}],
+            connection=connection,
+        )
+
+        context = service.load_relevant_context("session-1", "端侧推理")
+
+        self.assertIn("session_runs", context)
+        self.assertIn("session_facts", context)
+        self.assertNotIn("recent_tasks", context)
+        executed_sql = [sql for sql, _ in connection.statements]
+        self.assertFalse(any("FROM task_memories" in sql for sql in executed_sql))
+
+    def test_load_recent_task_logs_uses_dedicated_query(self) -> None:
+        connection = RecordingConnection(
+            query_rows={
+                "SELECT tm.run_id, tm.task_id, tm.title, tm.status, tm.summary, tm.created_at FROM task_memories tm JOIN research_runs rr ON rr.run_id = tm.run_id WHERE rr.session_id = %s": [
+                    {
+                        "run_id": "run-1",
+                        "task_id": 101,
+                        "title": "分析端到端延迟",
+                        "status": "completed",
+                        "summary": "定位检索链路延迟瓶颈",
+                        "created_at": "2026-04-01T11:00:00+00:00",
+                    }
+                ]
+            }
+        )
+        service = StubMemoryService(connection=connection)
+
+        task_logs = service.load_recent_task_logs(
+            "session-1",
+            exclude_run_id="run-2",
+            limit=5,
+        )
+
+        self.assertEqual(len(task_logs), 1)
+        self.assertEqual(task_logs[0]["task_id"], 101)
+        executed_sql = [sql for sql, _ in connection.statements]
+        self.assertTrue(any("FROM task_memories tm JOIN research_runs rr" in sql for sql in executed_sql))
+
+    def test_save_task_log_prunes_task_logs_per_session(self) -> None:
+        connection = RecordingConnection(
+            query_one={
+                "SELECT session_id FROM research_runs WHERE run_id = %s": {
+                    "session_id": "session-1"
+                }
+            }
+        )
+        service = StubMemoryService(connection=connection)
+        task = TodoItem(
+            id=1,
+            title="基础背景梳理",
+            intent="收集端侧大模型背景",
+            query="端侧大模型 推理",
+            status="completed",
+        )
+
+        service.save_task_log("run-1", task)
+
+        executed_sql = [sql for sql, _ in connection.statements]
+        self.assertTrue(any(sql.startswith("INSERT INTO task_memories") for sql in executed_sql))
+        self.assertTrue(
+            any(sql.startswith("DELETE FROM task_memories WHERE id IN") for sql in executed_sql)
+        )
         self.assertTrue(connection.committed)
 
 

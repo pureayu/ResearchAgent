@@ -781,8 +781,8 @@ class MemoryService(BaseMemoryService):
 
         return run_id
 
-    def save_task_memory(self, run_id: str, task: TodoItem) -> None:
-        """Persist a task-level episodic memory record for the current run."""
+    def save_task_log(self, run_id: str, task: TodoItem) -> None:
+        """Persist a task-level audit log record for the current run."""
 
         created_at = datetime.now(timezone.utc).isoformat()
 
@@ -831,6 +831,7 @@ class MemoryService(BaseMemoryService):
                     created_at,
                 ),
             )
+            self._prune_task_logs(connection, run_id)
             connection.commit()
 
     def save_report_memory(self, run_id: str, state: SummaryState, report: str) -> None:
@@ -899,7 +900,48 @@ class MemoryService(BaseMemoryService):
             connection.commit()
 
         return resolved_session_id
-    # 给当前 topic 准备一包“可复用的历史上下文”，供后面的 planner / reviewer / direct answer 使用。
+
+    def load_recent_task_logs(
+        self,
+        session_id: str | None,
+        *,
+        exclude_run_id: str | None = None,
+        limit: int = 5,
+    ) -> list[dict[str, Any]]:
+        """Load recent task-log rows for explicit history-recall flows."""
+
+        if not session_id or limit <= 0:
+            return []
+
+        with self._connect() as connection:
+            sql = """
+                SELECT tm.run_id, tm.task_id, tm.title, tm.status, tm.summary, tm.created_at
+                FROM task_memories tm
+                JOIN research_runs rr ON rr.run_id = tm.run_id
+                WHERE rr.session_id = %s
+            """
+            params: list[Any] = [session_id]
+            if exclude_run_id:
+                sql += " AND tm.run_id != %s"
+                params.append(exclude_run_id)
+            sql += " ORDER BY tm.created_at DESC, tm.id DESC LIMIT %s"
+            params.append(limit)
+
+            rows = connection.execute(sql, params).fetchall()
+
+        return [
+            {
+                "run_id": row["run_id"],
+                "task_id": row["task_id"],
+                "title": row["title"],
+                "status": row["status"],
+                "summary": row["summary"],
+                "created_at": row["created_at"],
+            }
+            for row in rows
+        ]
+
+    # 给当前 topic 准备一包“默认可注入”的历史上下文，供后面的 planner / reviewer / direct answer 使用。
     def load_relevant_context(
         self,
         session_id: str | None,
@@ -910,7 +952,6 @@ class MemoryService(BaseMemoryService):
         """Load recalled memory context for a new topic."""
 
         session_runs: list[dict[str, Any]] = []
-        recent_tasks: list[dict[str, Any]] = []
         session_facts: list[dict[str, Any]] = []
         profile_facts: list[dict[str, Any]] = []
         global_facts: list[dict[str, Any]] = []
@@ -949,31 +990,6 @@ class MemoryService(BaseMemoryService):
             profile_candidates: list[dict[str, Any]] = []
             global_candidates: list[dict[str, Any]] = []
             run_ids = [row["run_id"] for row in run_rows]
-            if run_ids:
-                task_rows = connection.execute(
-                    """
-                    SELECT run_id, task_id, title, status, summary, created_at
-                    FROM task_memories
-                    WHERE run_id = ANY(%s)
-                    ORDER BY created_at DESC
-                    LIMIT 8
-                    """,
-                    (run_ids,),
-                ).fetchall()
-            else:
-                task_rows = []
-
-            for row in task_rows:
-                recent_tasks.append(
-                    {
-                        "run_id": row["run_id"],
-                        "task_id": row["task_id"],
-                        "title": row["title"],
-                        "status": row["status"],
-                        "summary": row["summary"],
-                        "created_at": row["created_at"],
-                    }
-                )
 
             if run_ids:
                 session_candidates = self._search_semantic_facts(
@@ -1007,12 +1023,45 @@ class MemoryService(BaseMemoryService):
 
         return {
             "session_runs": session_runs,
-            "recent_tasks": recent_tasks,
             "session_facts": session_facts,
             "profile_facts": profile_facts,
             "global_facts": global_facts,
             "semantic_facts": session_facts,
         }
+
+    def _prune_task_logs(self, connection: Any, run_id: str) -> None:
+        """Keep task-log retention bounded per session."""
+
+        retention = max(0, int(self._config.task_log_retention_per_session))
+        if retention <= 0:
+            return
+
+        row = connection.execute(
+            """
+            SELECT session_id
+            FROM research_runs
+            WHERE run_id = %s
+            """,
+            (run_id,),
+        ).fetchone()
+        session_id = str((row or {}).get("session_id") or "").strip()
+        if not session_id:
+            return
+
+        connection.execute(
+            """
+            DELETE FROM task_memories
+            WHERE id IN (
+                SELECT tm.id
+                FROM task_memories tm
+                JOIN research_runs rr ON rr.run_id = tm.run_id
+                WHERE rr.session_id = %s
+                ORDER BY tm.created_at DESC, tm.id DESC
+                OFFSET %s
+            )
+            """,
+            (session_id, retention),
+        )
 
     def _search_semantic_facts(
         self,

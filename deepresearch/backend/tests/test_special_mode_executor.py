@@ -44,6 +44,7 @@ class SpecialModeExecutorTests(unittest.TestCase):
         direct_answer_responses: tuple[str, ...] = ("",),
         classifier_responses: tuple[str, ...] = ("",),
         selector_responses: tuple[str, ...] = ("",),
+        task_log_loader=None,
     ) -> SpecialModeExecutor:
         self.direct_answer_agent = StubAgent(*direct_answer_responses)
         self.classifier_agent = StubAgent(*classifier_responses)
@@ -53,6 +54,7 @@ class SpecialModeExecutorTests(unittest.TestCase):
             self.direct_answer_agent,
             self.classifier_agent,
             self.selector_agent,
+            task_log_loader=task_log_loader,
         )
 
     def test_classify_response_mode_downgrades_direct_answer_without_context(self) -> None:
@@ -91,6 +93,28 @@ class SpecialModeExecutorTests(unittest.TestCase):
 
         self.assertEqual(mode, RESPONSE_MODE_DIRECT_ANSWER)
 
+    def test_classify_response_mode_downgrades_direct_answer_when_only_task_logs_exist(self) -> None:
+        executor = self._make_executor(
+            classifier_responses=(
+                '{"response_mode":"direct_answer","confidence":0.91,"reason":"looks answerable"}',
+            ),
+        )
+
+        mode = executor.classify_response_mode(
+            "这个方案适合我吗",
+            {
+                "task_logs": [
+                    {
+                        "task_id": 101,
+                        "title": "分析端到端延迟",
+                        "summary": "定位检索链路延迟瓶颈。",
+                    }
+                ]
+            },
+        )
+
+        self.assertEqual(mode, RESPONSE_MODE_DEEP_RESEARCH)
+
     def test_memory_recall_uses_selector_output(self) -> None:
         executor = self._make_executor(
             selector_responses=(
@@ -113,7 +137,7 @@ class SpecialModeExecutorTests(unittest.TestCase):
                         "report_excerpt": "无关内容",
                     },
                 ],
-                "recent_tasks": [
+                "task_logs": [
                     {
                         "run_id": "run-1",
                         "task_id": 101,
@@ -172,7 +196,7 @@ class SpecialModeExecutorTests(unittest.TestCase):
                         "report_excerpt": "最近摘要",
                     }
                 ],
-                "recent_tasks": [
+                "task_logs": [
                     {
                         "run_id": "run-1",
                         "task_id": 1,
@@ -198,6 +222,58 @@ class SpecialModeExecutorTests(unittest.TestCase):
         self.assertNotIn("更老的任务", summary)
         self.assertIn("用户偏好中文回答", summary)
 
+    def test_memory_recall_loads_task_logs_via_dedicated_loader(self) -> None:
+        def load_task_logs(session_id, *, exclude_run_id=None, limit=5):
+            self.assertEqual(session_id, "session-1")
+            self.assertEqual(exclude_run_id, "run-2")
+            self.assertEqual(limit, 5)
+            return [
+                {
+                    "run_id": "run-1",
+                    "task_id": 101,
+                    "title": "分析端到端延迟",
+                    "summary": "定位检索链路延迟瓶颈。",
+                }
+            ]
+
+        executor = self._make_executor(
+            selector_responses=(
+                '{"run_ids":["run-1"],"task_ids":["101"],"fact_ids":["session-1"]}',
+            ),
+            task_log_loader=load_task_logs,
+        )
+        state = SummaryState(
+            session_id="session-1",
+            run_id="run-2",
+            recalled_context={
+                "session_runs": [
+                    {
+                        "run_id": "run-1",
+                        "topic": "RAG 延迟调研",
+                        "finished_at": "2026-03-31T10:00:00+08:00",
+                        "report_excerpt": "延迟与召回质量之间存在明显 tradeoff。",
+                    }
+                ],
+                "session_facts": [
+                    {
+                        "fact_id": "session-1",
+                        "run_id": "run-1",
+                        "fact": "检索质量和延迟之间存在明显 tradeoff。",
+                    }
+                ],
+            },
+        )
+
+        recalled_context = executor._build_memory_recall_context(state)
+        summary, _, _ = executor._build_memory_recall_answer(
+            state,
+            "你还记得之前关于延迟的研究吗",
+            recalled_context=recalled_context,
+        )
+
+        self.assertIn("分析端到端延迟", summary)
+        self.assertNotIn("task_logs", state.recalled_context)
+
     def test_memory_recall_without_history_returns_fixed_message(self) -> None:
         executor = self._make_executor()
 
@@ -216,6 +292,9 @@ class SpecialModeExecutorTests(unittest.TestCase):
             recalled_context={
                 "profile_facts": [{"fact": "用户偏好简洁回答"}],
                 "global_facts": [{"fact": "压缩模型通常会影响召回质量"}],
+                "task_logs": [
+                    {"title": "不应进入短答", "summary": "task log 不应污染 direct answer"}
+                ],
             }
         )
 
@@ -224,7 +303,9 @@ class SpecialModeExecutorTests(unittest.TestCase):
 
         self.assertIn("跨会话稳定知识", prompt)
         self.assertIn("压缩模型通常会影响召回质量", prompt)
+        self.assertNotIn("最近相关任务", prompt)
         self.assertIn("Source: Global Memory 1", sources_summary)
+        self.assertNotIn("Recent Task", sources_summary)
         self.assertEqual(evidence_count, 2)
 
 

@@ -106,6 +106,7 @@ class ResearchTaskExecutor:
         answer_text: str | None = None
         current_query = task.query
         gap_reason: str | None = None
+        deferred_notices: list[str] = []
 
         for index, capability_id in enumerate(runtime_task.planned_capabilities, start=1):
             has_next_source = index < len(runtime_task.planned_capabilities)
@@ -153,9 +154,9 @@ class ResearchTaskExecutor:
                 task=runtime_task,
             )
             runtime_task.attempt_count += 1
-            runtime_task.notices.extend(source_notices)
 
             if source_result and source_result.get("results"):
+                deferred_notices = []
                 search_result = (
                     source_result
                     if search_result is None
@@ -165,6 +166,9 @@ class ResearchTaskExecutor:
                     answer_text = source_answer
             elif search_result is None:
                 search_result = source_result
+                self._extend_unique_notices(deferred_notices, source_notices)
+            else:
+                self._extend_unique_notices(deferred_notices, source_notices)
 
             runtime_task.search_backend = (
                 str(search_result.get("backend") or backend_label) if search_result else backend_label
@@ -182,7 +186,6 @@ class ResearchTaskExecutor:
                     query=current_query,
                 )
             )
-            yield from emit_many(self._emit_notices(source_notices, runtime_task.id))
 
             gap_reason = self._evidence_policy.assess_evidence_gap(
                 current_query,
@@ -198,8 +201,10 @@ class ResearchTaskExecutor:
                 break
 
         if not search_result or not search_result.get("results"):
+            runtime_task.notices.extend(deferred_notices)
             runtime_task.status = "skipped"
             yield from emit_many(drain_and_capture_tool_events())
+            yield from emit_many(self._emit_notices(deferred_notices, runtime_task.id))
             yield from emit(
                 self._mark_skipped_or_failed(
                     task=runtime_task,
@@ -486,6 +491,12 @@ class ResearchTaskExecutor:
                 }
             )
         return payloads
+
+    @staticmethod
+    def _extend_unique_notices(target: list[str], notices: list[str]) -> None:
+        for notice in notices:
+            if notice and notice not in target:
+                target.append(notice)
 
     @staticmethod
     def _build_stage_event(

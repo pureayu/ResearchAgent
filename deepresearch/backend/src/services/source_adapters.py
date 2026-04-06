@@ -168,6 +168,8 @@ class ArxivSourceAdapter:
         if provider != "arxiv":
             raise ValueError(f"Unsupported academic search provider: {provider}")
 
+        timeout_seconds = max(1.0, float(config.academic_search_timeout_seconds or 6.0))
+
         try:
             response = requests.get(
                 ARXIV_API_URL,
@@ -178,7 +180,7 @@ class ArxivSourceAdapter:
                     "sortBy": "relevance",
                     "sortOrder": "descending",
                 },
-                timeout=20,
+                timeout=timeout_seconds,
             )
             response.raise_for_status()
         except requests.RequestException as exc:
@@ -187,7 +189,7 @@ class ArxivSourceAdapter:
                 "results": [],
                 "backend": "arxiv",
                 "answer": None,
-                "notices": [str(exc)],
+                "notices": [self._build_notice(exc)],
             }
 
         try:
@@ -246,6 +248,14 @@ class ArxivSourceAdapter:
             "answer": None,
             "notices": [],
         }
+
+    @staticmethod
+    def _build_notice(exc: Exception) -> str:
+        """Return a short user-facing notice for arXiv failures."""
+
+        if isinstance(exc, requests.Timeout):
+            return "arXiv 学术检索超时，已自动继续其他来源。"
+        return "arXiv 学术检索暂时不可用，已自动继续其他来源。"
 
     @staticmethod
     def _clean_text(value: str) -> str:
