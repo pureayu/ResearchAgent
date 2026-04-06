@@ -1,3 +1,4 @@
+import logging
 import math
 from collections import Counter
 from pathlib import Path
@@ -14,7 +15,10 @@ from app.embedding_client import EmbeddingClient
 from app.metadata_store import MetadataStore
 from app.models import Citation, DocumentRecord, ProcessedDocument
 from app.pgvector_chunk_store import PGVectorChunkStore
+from app.rerank_client import DashScopeRerankClient
 from app.utils import load_json
+
+logger = logging.getLogger(__name__)
 
 BM25_STOPWORDS = {
     "a",
@@ -69,6 +73,7 @@ class RetrievalCandidate(BaseModel):
     lexical_score: float = 0.0
     title_score: float = 0.0
     fusion_score: float = 0.0
+    model_score: float = 0.0
     rerank_score: float = 0.0
 
 
@@ -78,6 +83,7 @@ class SimpleVectorRAG:
         self.store = MetadataStore(settings.metadata_file, settings.manifest_file)
         self.embedding_client = EmbeddingClient(settings)
         self.chunk_store = PGVectorChunkStore(settings)
+        self.rerank_client = DashScopeRerankClient(settings)
 
     def build_index(self, documents: list[DocumentRecord], rebuild: bool = False) -> int:
         if rebuild:
@@ -294,7 +300,70 @@ class SimpleVectorRAG:
             )
 
         candidates.sort(key=lambda item: item.rerank_score, reverse=True)
-        return candidates
+        model_reranked = self._model_rerank_candidates(query, candidates)
+        return model_reranked or candidates
+
+    def _model_rerank_candidates(
+        self,
+        query: str,
+        candidates: list[RetrievalCandidate],
+    ) -> list[RetrievalCandidate]:
+        if not self.rerank_client.enabled or len(candidates) < 2:
+            return []
+
+        documents = [
+            self._build_rerank_document(item.record)
+            for item in candidates
+        ]
+        top_n = max(1, min(self.settings.rerank_top_n, len(candidates)))
+
+        try:
+            reranked = self.rerank_client.rerank(
+                query=query,
+                documents=documents,
+                top_n=top_n,
+            )
+        except Exception as exc:
+            logger.warning("DashScope model rerank failed; falling back to heuristic rerank: %s", exc)
+            return []
+
+        if not reranked:
+            return []
+
+        ordered: list[RetrievalCandidate] = []
+        seen_indices: set[int] = set()
+        for rank, (index, score) in enumerate(reranked, start=1):
+            if index < 0 or index >= len(candidates) or index in seen_indices:
+                continue
+            candidate = candidates[index]
+            candidate.model_score = score
+            candidate.rerank_score = score
+            ordered.append(candidate)
+            seen_indices.add(index)
+
+        for index, candidate in enumerate(candidates):
+            if index in seen_indices:
+                continue
+            candidate.model_score = 0.0
+            ordered.append(candidate)
+
+        if len(ordered) <= 1:
+            return ordered
+
+        floor_score = min((item.rerank_score for item in ordered if item.model_score > 0), default=0.0)
+        for offset, candidate in enumerate(ordered):
+            if candidate.model_score > 0:
+                continue
+            candidate.rerank_score = max(0.0, floor_score - 0.001 * (offset + 1))
+
+        return ordered
+
+    def _build_rerank_document(self, record: IndexedChunk) -> str:
+        body = record.text[: max(1, self.settings.rerank_max_chars_per_doc)].strip()
+        title = (record.title or "").strip()
+        if title and body:
+            return f"Title: {title}\n\n{body}"
+        return title or body
 def _term_counter(text: str) -> Counter[str]:
     counter: Counter[str] = Counter()
     for term in _tokenize(text):

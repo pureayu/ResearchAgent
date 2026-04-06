@@ -62,8 +62,16 @@ python scripts/build_simple_index.py --rebuild
 
 - `LLM_MODEL` / `LLM_API_KEY` / `LLM_BASE_URL`
 - `EMBEDDING_MODEL` / `EMBEDDING_DIM`
+- 可选：`RERANK_MODEL` / `RERANK_API_KEY`
 
 如果 embedding 服务和 chat 服务共用同一个 OpenAI-compatible 提供方，`EMBEDDING_API_KEY` 和 `EMBEDDING_BASE_URL` 可以留空。
+如果你要启用阿里云 DashScope 的 `qwen3-rerank`，可额外配置：
+
+- `RERANK_MODEL=qwen3-rerank`
+- `RERANK_API_KEY=<DashScope API Key>`
+- `RERANK_BASE_URL=https://dashscope.aliyuncs.com/api/v1/services/rerank/text-rerank/text-rerank`
+
+启用后，本地 RAG 会在混合召回候选上优先走模型型 rerank；如果接口失败，会自动回退到现有的轻量级特征重排。
 
 本地 RAG 默认还需要一个 `pgvector` PostgreSQL：
 

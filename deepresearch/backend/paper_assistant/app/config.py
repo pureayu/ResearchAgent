@@ -38,6 +38,24 @@ class Settings(BaseModel):
     embedding_base_url: str | None = Field(default_factory=lambda: os.getenv("EMBEDDING_BASE_URL"))
     embedding_dim: int = Field(default_factory=lambda: int(os.getenv("EMBEDDING_DIM", "1536")))
     embedding_max_tokens: int = Field(default_factory=lambda: int(os.getenv("EMBEDDING_MAX_TOKENS", "8192")))
+    rerank_model: str | None = Field(default_factory=lambda: os.getenv("RERANK_MODEL"))
+    rerank_api_key: str | None = Field(default_factory=lambda: os.getenv("RERANK_API_KEY"))
+    rerank_base_url: str = Field(
+        default_factory=lambda: os.getenv(
+            "RERANK_BASE_URL",
+            "https://dashscope.aliyuncs.com/api/v1/services/rerank/text-rerank/text-rerank",
+        )
+    )
+    rerank_timeout: int = Field(
+        default_factory=lambda: int(
+            os.getenv("RERANK_TIMEOUT", os.getenv("LLM_TIMEOUT", "120"))
+        )
+    )
+    rerank_top_n: int = Field(default_factory=lambda: int(os.getenv("RERANK_TOP_N", "20")))
+    rerank_max_chars_per_doc: int = Field(
+        default_factory=lambda: int(os.getenv("RERANK_MAX_CHARS_PER_DOC", "1800"))
+    )
+    rerank_instruct: str | None = Field(default_factory=lambda: os.getenv("RERANK_INSTRUCT"))
 
     response_language: str = Field(default_factory=lambda: os.getenv("RESPONSE_LANGUAGE", "Chinese"))
 
@@ -88,6 +106,14 @@ class Settings(BaseModel):
     @property
     def effective_embedding_base_url(self) -> str | None:
         return self.embedding_base_url or self.llm_base_url
+
+    @property
+    def effective_rerank_api_key(self) -> str | None:
+        return self.rerank_api_key or self.llm_api_key
+
+    @property
+    def rerank_enabled(self) -> bool:
+        return bool(self.rerank_model and self.effective_rerank_api_key and self.rerank_base_url)
 
 
 @lru_cache(maxsize=1)
