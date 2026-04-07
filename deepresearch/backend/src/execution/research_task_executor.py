@@ -13,7 +13,7 @@ from capability_types import (
     SEARCH_WEB_PAGES_CAPABILITY,
 )
 from config import Configuration
-from execution.evidence_policy import EvidencePolicy, LOCAL_LIBRARY_BACKEND
+from execution.evidence_policy import EvidencePolicy
 from execution.models import ExecutionEvent, TaskExecutionResult, TaskPatch
 from models import SummaryState, TodoItem
 from services.search import dispatch_capability_search, prepare_research_context
@@ -505,9 +505,7 @@ class ResearchTaskExecutor:
         capability_id: str,
         query: str,
     ) -> dict[str, Any]:
-        if capability_id == LOCAL_LIBRARY_BACKEND:
-            stage = "retrieving_local"
-        elif capability_id == SEARCH_ACADEMIC_PAPERS_CAPABILITY:
+        if capability_id == SEARCH_ACADEMIC_PAPERS_CAPABILITY:
             stage = "retrieving_academic"
         elif capability_id == INSPECT_GITHUB_REPO_CAPABILITY:
             stage = "retrieving_github"

@@ -9,11 +9,9 @@ from datetime import datetime
 from typing import Any
 
 from agent_runtime.interfaces import AgentLike
-from capability_types import SEARCH_LOCAL_DOCS_CAPABILITY
 from config import Configuration
 from execution.models import ExecutionEvent, TaskExecutionResult, TaskPatch
 from models import SummaryState, TodoItem
-from services.search import dispatch_capability_search, prepare_research_context
 from services.text_processing import dedupe_markdown_blocks, strip_tool_calls
 from utils import strip_thinking_tokens
 
@@ -157,7 +155,7 @@ class SpecialModeExecutor:
         *,
         emit_stream: bool,
     ) -> Iterator[dict[str, Any]]:
-        """Answer short questions from local evidence plus recalled context."""
+        """Answer short questions from recalled context."""
 
         runtime_task = replace(task)
         local_events: list[ExecutionEvent] = []
@@ -172,47 +170,18 @@ class SpecialModeExecutor:
         runtime_task.needs_followup = False
         runtime_task.evidence_gap_reason = None
 
-        local_result, local_notices, local_answer, backend_label = dispatch_capability_search(
-            SEARCH_LOCAL_DOCS_CAPABILITY,
-            runtime_task.query,
-            self._config,
-            state.research_loop_count,
-            task=runtime_task,
-        )
-        local_sources_summary = ""
-        local_context = ""
-        local_evidence_count = 0
-
-        if local_result and local_result.get("results"):
-            local_sources_summary, local_context = prepare_research_context(
-                local_result,
-                local_answer,
-                self._config,
-            )
-            local_evidence_count = len(local_result.get("results") or [])
-            runtime_task.search_backend = f"{backend_label}+memory"
-            runtime_task.notices = [
-                "本任务先检索本地资料库，再结合已召回上下文生成回答，未进行联网搜索。"
-            ]
-        else:
-            runtime_task.search_backend = "memory"
-            runtime_task.notices = [
-                "本地资料库未命中，已回退为基于已召回上下文的直接回答，未进行联网搜索。"
-            ]
-
-        self._extend_unique_notices(runtime_task.notices, local_notices)
+        runtime_task.search_backend = "memory"
+        runtime_task.notices = [
+            "本任务基于已召回的长期目标、偏好和会话上下文生成回答，未触发外部检索。"
+        ]
 
         summary, sources_summary, evidence_count = self._build_direct_answer_output(
             state,
             runtime_task.query,
-            local_context=local_context,
         )
         runtime_task.summary = summary
-        runtime_task.sources_summary = self._merge_source_sections(
-            local_sources_summary,
-            sources_summary,
-        )
-        runtime_task.evidence_count = local_evidence_count + evidence_count
+        runtime_task.sources_summary = sources_summary
+        runtime_task.evidence_count = evidence_count
         runtime_task.top_score = 1.0 if runtime_task.evidence_count else 0.0
         runtime_task.status = "completed"
 
@@ -575,16 +544,10 @@ class SpecialModeExecutor:
         self,
         state: SummaryState,
         query: str,
-        *,
-        local_context: str = "",
     ) -> tuple[str, str, int]:
-        """Generate a concise answer grounded in recalled context and local evidence."""
+        """Generate a concise answer grounded in recalled context."""
 
-        prompt = self._build_direct_answer_prompt(
-            state,
-            query,
-            local_context=local_context,
-        )
+        prompt = self._build_direct_answer_prompt(state, query)
         try:
             response = self._direct_answer_agent.run(prompt)
         finally:
@@ -609,8 +572,6 @@ class SpecialModeExecutor:
         self,
         state: SummaryState,
         query: str,
-        *,
-        local_context: str = "",
     ) -> str:
         """Build the input for the direct-answer agent."""
 
@@ -645,13 +606,11 @@ class SpecialModeExecutor:
         )
 
         has_context = self._has_direct_answer_context(recalled)
-        local_context_block = local_context.strip() or "暂无命中的本地资料库结果"
 
         return (
             f"当前问题：{query}\n"
             f"是否命中历史上下文：{'是' if has_context else '否'}\n\n"
             "请直接回答用户，不要把自己写成研究报告。\n\n"
-            f"本地资料检索上下文：\n{local_context_block}\n\n"
             f"长期目标/偏好/约束：\n{profile_block}\n\n"
             f"当前会话语义记忆：\n{session_fact_block}\n\n"
             f"跨会话稳定知识：\n{global_fact_block}\n\n"

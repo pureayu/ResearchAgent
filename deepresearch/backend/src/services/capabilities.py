@@ -9,7 +9,6 @@ from typing import Any, Optional, Protocol, Tuple
 from capability_types import (
     SEARCH_ACADEMIC_PAPERS_CAPABILITY,
     INSPECT_GITHUB_REPO_CAPABILITY,
-    SEARCH_LOCAL_DOCS_CAPABILITY,
     SEARCH_WEB_PAGES_CAPABILITY,
 )
 from config import Configuration
@@ -21,7 +20,6 @@ from source_types import (
     ACADEMIC_SOURCE_TYPE,
     GITHUB_MCP_BACKEND,
     GITHUB_SOURCE_TYPE,
-    LOCAL_LIBRARY_SOURCE,
     WEB_SEARCH_SOURCE,
 )
 
@@ -47,14 +45,6 @@ class CapabilityRegistry:
     def __init__(self, config: Configuration | None = None) -> None:
         github_enabled = bool(config.enable_github_mcp) if config is not None else False
         self._specs = {
-            SEARCH_LOCAL_DOCS_CAPABILITY: CapabilitySpec(
-                id=SEARCH_LOCAL_DOCS_CAPABILITY,
-                description="Search the local high-quality document library first.",
-                source_type=LOCAL_LIBRARY_SOURCE,
-                backing_source_id=LOCAL_LIBRARY_SOURCE,
-                tags=("local", "docs", "library"),
-                default_priority=10,
-            ),
             SEARCH_ACADEMIC_PAPERS_CAPABILITY: CapabilitySpec(
                 id=SEARCH_ACADEMIC_PAPERS_CAPABILITY,
                 description="Search academic-paper metadata such as papers, surveys, and benchmarks.",
@@ -148,7 +138,6 @@ class CapabilityExecutor:
     def __init__(self, registry: CapabilityRegistry) -> None:
         self._registry = registry
         self._handlers: dict[str, CapabilityHandler] = {
-            SEARCH_LOCAL_DOCS_CAPABILITY: SourceBackedCapabilityHandler(LOCAL_LIBRARY_SOURCE),
             SEARCH_ACADEMIC_PAPERS_CAPABILITY: SourceBackedCapabilityHandler(ACADEMIC_SEARCH_SOURCE),
             SEARCH_WEB_PAGES_CAPABILITY: SourceBackedCapabilityHandler(WEB_SEARCH_SOURCE),
             INSPECT_GITHUB_REPO_CAPABILITY: GitHubRepoCapabilityHandler(),
@@ -237,7 +226,6 @@ def _normalize_result_source_types(
         return
 
     default_type_map = {
-        LOCAL_LIBRARY_SOURCE: LOCAL_LIBRARY_SOURCE,
         ACADEMIC_SEARCH_SOURCE: ACADEMIC_SOURCE_TYPE,
         WEB_SEARCH_SOURCE: WEB_SEARCH_SOURCE,
         GITHUB_MCP_BACKEND: GITHUB_SOURCE_TYPE,

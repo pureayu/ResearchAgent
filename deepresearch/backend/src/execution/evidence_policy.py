@@ -8,14 +8,10 @@ from typing import Any
 from capability_types import (
     INSPECT_GITHUB_REPO_CAPABILITY,
     SEARCH_ACADEMIC_PAPERS_CAPABILITY,
-    SEARCH_LOCAL_DOCS_CAPABILITY,
     SEARCH_WEB_PAGES_CAPABILITY,
 )
 from config import Configuration
 from models import TodoItem
-
-LOCAL_LIBRARY_BACKEND = SEARCH_LOCAL_DOCS_CAPABILITY
-
 
 class EvidencePolicy:
     """Encapsulate evidence-gap heuristics across multiple sources."""
@@ -42,13 +38,6 @@ class EvidencePolicy:
 
         top_score = self._extract_top_score(search_result)
         source_breakdown = self.summarize_search_result(search_result).get("source_breakdown", {})
-
-        if current_capability == SEARCH_LOCAL_DOCS_CAPABILITY:
-            if len(results) < 3:
-                return "insufficient_local_coverage"
-            if top_score < 0.65:
-                return "low_local_confidence"
-            return None
 
         if current_capability == SEARCH_ACADEMIC_PAPERS_CAPABILITY:
             academic_results = [

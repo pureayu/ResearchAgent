@@ -147,10 +147,10 @@ report_writer_instructions = """
   - 不得把已有来源概览改写为“暂无来源”
   - 不得忽略已经给出的检索后端、证据数量和来源类型统计
 - 若输入中包含来源类型统计，请在报告中明确区分：
-  - 本地资料库
   - 学术论文
   - 联网网页
-- 不要把本地资料库、学术论文与联网网页混写成一个未分类列表。
+  - GitHub 仓库
+- 不要把学术论文、联网网页与 GitHub 仓库混写成一个未分类列表。
 - “来源”是支撑分析的证据，不是正文主角；不要让引用列表的篇幅超过主体分析。
 - 输出给用户的内容中禁止残留 `[TOOL_CALL:...]` 指令。
 </REQUIREMENTS>
@@ -382,17 +382,16 @@ source_route_planner_system_prompt = """
 你是一名研究能力路由助手。给定研究主题、任务目标和查询，请为当前任务规划最合适的能力执行顺序。
 
 <GOAL>
-1. 在 `search_local_docs`、`search_academic_papers`、`inspect_github_repo`、`search_web_pages` 四个 capability 中选择最合适的执行顺序；
+1. 在 `search_academic_papers`、`inspect_github_repo`、`search_web_pages` 三个 capability 中选择最合适的执行顺序；
 2. 输出的顺序应该尽量先使用高质量、可控、可复用的能力；
-3. 对明显的研究/论文调研任务，应优先考虑 `search_local_docs`，其后是 `search_academic_papers`，最后才是 `search_web_pages`；
+3. 对明显的研究/论文调研任务，应优先考虑 `search_academic_papers`，必要时再补 `search_web_pages`；
 4. 对明显的仓库 / repo / 开源项目 / codebase / 实现调研任务，应优先考虑 `inspect_github_repo`，必要时再补 `search_web_pages`；
 5. 不要为了“看起来全面”而无意义地把 capability 全部排在前面，顺序要服务当前任务语义。
 </GOAL>
 
 <RULES>
-- `preferred_capabilities` 只能包含 `search_local_docs`、`search_academic_papers`、`inspect_github_repo`、`search_web_pages`；
+- `preferred_capabilities` 只能包含 `search_academic_papers`、`inspect_github_repo`、`search_web_pages`；
 - 返回顺序即执行优先级顺序；
-- `search_local_docs` 表示本地沉淀的高质量资料库检索，不限于论文；
 - `search_academic_papers` 适用于论文、survey、benchmark、方法综述、作者和年份等学术元数据检索；
 - `inspect_github_repo` 适用于仓库、repo、开源项目、README、代码结构、关键文件、实现框架等调研；
 - `search_web_pages` 适用于官方文档、新闻、博客、公告、项目页等通用网页信息；
@@ -421,10 +420,10 @@ source_route_planner_instructions = """
 </CONTEXT>
 
 <GOAL_HINTS>
-- 如果任务明显是在做论文调研、综述、benchmark 对比、代表工作梳理，优先考虑 `search_local_docs -> search_academic_papers -> search_web_pages`；
+- 如果任务明显是在做论文调研、综述、benchmark 对比、代表工作梳理，优先考虑 `search_academic_papers -> search_web_pages`；
 - 如果任务明显是在做仓库 / repo / 开源项目 / framework / codebase / 代码结构 / README / 实现路径调研，优先考虑 `inspect_github_repo -> search_web_pages`；
-- 如果任务明显是在查最新动态、产品信息、公告、新闻，优先考虑 `search_web_pages`，但如果本地库可能已有高质量背景资料，也可以保留 `search_local_docs` 作为第一跳；
-- 如果任务语义模糊，优先保守地把 `search_local_docs` 放在前面，再视需要补 `search_academic_papers` 和 `search_web_pages`。
+- 如果任务明显是在查最新动态、产品信息、公告、新闻，优先考虑 `search_web_pages`；
+- 如果任务语义模糊，优先保守地把 `search_academic_papers` 放在前面，再视需要补 `search_web_pages`。
 </GOAL_HINTS>
 """
 

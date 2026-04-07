@@ -1,11 +1,9 @@
-"""Thin source adapters for local, academic, and web retrieval."""
+"""Thin source adapters for academic and web retrieval."""
 
 from __future__ import annotations
 
 import logging
-import sys
 import xml.etree.ElementTree as ET
-from pathlib import Path
 from typing import Any, Protocol
 
 import requests
@@ -33,72 +31,6 @@ class SourceAdapter(Protocol):
         max_results: int = 5,
     ) -> dict[str, Any] | str:
         """Run a source-specific search and return normalized payload."""
-
-
-class LocalLibrarySourceAdapter:
-    """Adapter for the embedded local paper/library tool."""
-
-    source_id = "local_library"
-
-    def __init__(self) -> None:
-        self._tool = None
-
-    def search(
-        self,
-        query: str,
-        config: Configuration,
-        *,
-        loop_count: int,
-        max_results: int = 5,
-    ) -> dict[str, Any]:
-        del config, loop_count
-
-        tool = self._get_tool()
-        response = tool.run(
-            {
-                "query": query,
-                "top_k": max_results,
-                "retrieval_mode": "hybrid",
-            }
-        )
-
-        results = []
-        for item in response.results:
-            results.append(
-                {
-                    "title": item.title,
-                    "url": item.filepath,
-                    "content": item.snippet,
-                    "raw_content": item.content,
-                    "score": item.score,
-                    "page": item.page,
-                    "source_type": "local_library",
-                }
-            )
-
-        return {
-            "results": results,
-            "backend": self.source_id,
-            "answer": None,
-            "notices": [],
-        }
-
-    def _get_tool(self):
-        if self._tool is not None:
-            return self._tool
-
-        repo_root = Path(__file__).resolve().parents[4]
-        paper_assistant_root = repo_root / "deepresearch" / "backend" / "paper_assistant"
-        if not paper_assistant_root.exists():
-            raise RuntimeError("Unable to locate deepresearch/backend/paper_assistant.")
-
-        if str(paper_assistant_root) not in sys.path:
-            sys.path.insert(0, str(paper_assistant_root))
-
-        from app.local_library_tools import LocalLibrarySearchTool
-
-        self._tool = LocalLibrarySearchTool()
-        return self._tool
 
 
 class WebSearchSourceAdapter:
@@ -139,10 +71,7 @@ class WebSearchSourceAdapter:
 
     @staticmethod
     def _resolve_backend(config: Configuration) -> str:
-        backend = get_config_value(config.search_api)
-        if backend == "local_library":
-            return "advanced"
-        return backend
+        return get_config_value(config.search_api)
 
 
 class ArxivSourceAdapter:
@@ -262,7 +191,6 @@ class ArxivSourceAdapter:
         return " ".join((value or "").split())
 
 
-_LOCAL_ADAPTER = LocalLibrarySourceAdapter()
 _ACADEMIC_ADAPTER = ArxivSourceAdapter()
 _WEB_ADAPTER = WebSearchSourceAdapter()
 
@@ -271,7 +199,6 @@ def get_source_adapters() -> dict[str, SourceAdapter]:
     """Return the fixed v1 adapter map."""
 
     return {
-        _LOCAL_ADAPTER.source_id: _LOCAL_ADAPTER,
         _ACADEMIC_ADAPTER.source_id: _ACADEMIC_ADAPTER,
         _WEB_ADAPTER.source_id: _WEB_ADAPTER,
     }

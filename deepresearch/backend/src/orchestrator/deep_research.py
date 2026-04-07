@@ -231,7 +231,7 @@ class DeepResearchAgent:
                 "message": (
                     f"开始第 {current_round} 轮研究"
                     if state.response_mode == RESPONSE_MODE_DEEP_RESEARCH
-                    else "正在检索本地资料并结合已召回上下文生成回答"
+                    else "正在结合已召回上下文生成回答"
                     if state.response_mode == RESPONSE_MODE_DIRECT_ANSWER
                     else "正在整理当前会话中的相关历史记录"
                 ),
@@ -617,7 +617,7 @@ class DeepResearchAgent:
         return TodoItem(
             id=1,
             title="个性化直接回答",
-            intent="先检索本地资料库，再结合已召回的长期目标、偏好和会话上下文，给出简洁明确的回答",
+            intent="结合已召回的长期目标、偏好和会话上下文，给出简洁明确的回答",
             query=state.research_topic,
             origin="direct",
         )
@@ -641,7 +641,7 @@ class DeepResearchAgent:
         if response_mode == RESPONSE_MODE_MEMORY_RECALL:
             return "检测到历史回忆型问题，优先检索会话记忆"
         if response_mode == RESPONSE_MODE_DIRECT_ANSWER:
-            return "检测到可直接回答的问题，正在检索本地资料并结合历史上下文生成回答"
+            return "检测到可直接回答的问题，正在结合历史上下文生成回答"
         return "初始化研究流程"
 
     @staticmethod

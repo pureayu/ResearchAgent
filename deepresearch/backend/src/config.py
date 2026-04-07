@@ -11,7 +11,6 @@ class SearchAPI(Enum):
     DUCKDUCKGO = "duckduckgo"
     SEARXNG = "searxng"
     ADVANCED = "advanced"
-    LOCAL_LIBRARY = "local_library"
 
 
 class AcademicSearchProvider(Enum):
@@ -202,7 +201,6 @@ class Configuration(BaseModel):
                 if value is not None:
                     raw_values[key] = value
 
-        # Reuse paper_assistant-style OpenAI-compatible settings by default.
         # If a custom base URL is provided but no explicit provider is set,
         # avoid falling back to the local Ollama path.
         if raw_values.get("llm_base_url") and "llm_provider" not in raw_values:

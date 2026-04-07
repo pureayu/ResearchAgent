@@ -35,9 +35,9 @@ class SourceRoutingServiceTests(unittest.TestCase):
                 """
                 {
                   "intent_label": "literature_review",
-                  "preferred_capabilities": ["search_local_docs", "search_academic_papers", "search_web_pages"],
+                  "preferred_capabilities": ["search_academic_papers", "search_web_pages"],
                   "confidence": 0.91,
-                  "reason": "先查本地，再补论文和网页"
+                  "reason": "先查论文，再补网页"
                 }
                 """
             ),
@@ -51,7 +51,7 @@ class SourceRoutingServiceTests(unittest.TestCase):
 
         self.assertEqual(
             plan.preferred_capabilities,
-            ["search_local_docs", "search_academic_papers", "search_web_pages"],
+            ["search_academic_papers", "search_web_pages"],
         )
         self.assertEqual(plan.intent_label, "literature_review")
         self.assertGreater(plan.confidence, 0.9)

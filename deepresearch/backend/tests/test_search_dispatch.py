@@ -11,7 +11,6 @@ if str(SRC_ROOT) not in sys.path:
 from capability_types import (
     INSPECT_GITHUB_REPO_CAPABILITY,
     SEARCH_ACADEMIC_PAPERS_CAPABILITY,
-    SEARCH_LOCAL_DOCS_CAPABILITY,
     SEARCH_WEB_PAGES_CAPABILITY,
 )
 from config import Configuration
@@ -32,10 +31,6 @@ class SearchDispatchTests(unittest.TestCase):
     def test_registry_maps_capabilities_to_backing_sources(self) -> None:
         registry = CapabilityRegistry()
 
-        self.assertEqual(
-            registry.require(SEARCH_LOCAL_DOCS_CAPABILITY).backing_source_id,
-            "local_library",
-        )
         self.assertEqual(
             registry.require(SEARCH_ACADEMIC_PAPERS_CAPABILITY).backing_source_id,
             "academic_search",

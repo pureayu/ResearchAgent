@@ -694,7 +694,6 @@ const traceHighlight = ref(false);
 let currentController: AbortController | null = null;
 
 const searchOptions = [
-  "local_library",
   "advanced",
   "duckduckgo",
   "tavily",
@@ -792,7 +791,7 @@ const currentTaskOriginLabel = computed(() => {
   return "初始规划任务";
 });
 const showComparableTopScore = computed(
-  () => currentTaskSearchBackend.value === "local_library"
+  () => currentTaskTopScore.value !== null
 );
 
 const activeStageIndex = computed(() => {

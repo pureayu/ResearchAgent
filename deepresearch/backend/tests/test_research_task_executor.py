@@ -11,7 +11,6 @@ if str(SRC_ROOT) not in sys.path:
 from capability_types import (
     INSPECT_GITHUB_REPO_CAPABILITY,
     SEARCH_ACADEMIC_PAPERS_CAPABILITY,
-    SEARCH_LOCAL_DOCS_CAPABILITY,
     SEARCH_WEB_PAGES_CAPABILITY,
 )
 from config import Configuration
@@ -63,8 +62,8 @@ class ResearchTaskExecutorTests(unittest.TestCase):
             lambda step=None: [],
         )
 
-    def test_local_stop(self) -> None:
-        executor = self._make_executor([SEARCH_LOCAL_DOCS_CAPABILITY])
+    def test_academic_stop(self) -> None:
+        executor = self._make_executor([SEARCH_ACADEMIC_PAPERS_CAPABILITY])
         state = SummaryState(research_topic="topic")
         task = TodoItem(id=1, title="任务", intent="目标", query="query")
 
@@ -73,53 +72,9 @@ class ResearchTaskExecutorTests(unittest.TestCase):
             return_value=(
                 {
                     "results": [
-                        {"title": "a", "url": "u1", "content": "c", "raw_content": "c", "score": 0.9, "source_type": "local_library"},
-                        {"title": "b", "url": "u2", "content": "c", "raw_content": "c", "score": 0.8, "source_type": "local_library"},
-                        {"title": "c", "url": "u3", "content": "c", "raw_content": "c", "score": 0.7, "source_type": "local_library"},
-                    ],
-                    "backend": "local_library",
-                    "answer": None,
-                    "notices": [],
-                },
-                [],
-                None,
-                "local_library",
-            ),
-        ):
-            result = consume(executor.execute(state, task, emit_stream=False))
-
-        self.assertEqual(result.task_patch.attempt_count, 1)
-        self.assertEqual(result.task_patch.search_backend, "local_library")
-        self.assertEqual(result.task_patch.planned_capabilities, [SEARCH_LOCAL_DOCS_CAPABILITY])
-        self.assertEqual(result.task_patch.current_capability, SEARCH_LOCAL_DOCS_CAPABILITY)
-        self.assertIsNone(result.task_patch.evidence_gap_reason)
-
-    def test_local_then_academic_stop(self) -> None:
-        executor = self._make_executor(
-            [SEARCH_LOCAL_DOCS_CAPABILITY, SEARCH_ACADEMIC_PAPERS_CAPABILITY]
-        )
-        state = SummaryState(research_topic="topic")
-        task = TodoItem(id=1, title="任务", intent="目标", query="query")
-        responses = [
-            (
-                {
-                    "results": [
-                        {"title": "a", "url": "u1", "content": "c", "raw_content": "c", "score": 0.9, "source_type": "local_library"}
-                    ],
-                    "backend": "local_library",
-                    "answer": None,
-                    "notices": [],
-                },
-                [],
-                None,
-                "local_library",
-            ),
-            (
-                {
-                    "results": [
-                        {"title": "p1", "url": "p1", "content": "abs", "raw_content": "abs", "score": 1.0, "source_type": "academic", "pdf_url": "pdf1"},
-                        {"title": "p2", "url": "p2", "content": "abs", "raw_content": "abs", "score": 0.9, "source_type": "academic", "pdf_url": "pdf2"},
-                        {"title": "p3", "url": "p3", "content": "abs", "raw_content": "abs", "score": 0.8, "source_type": "academic", "pdf_url": "pdf3"},
+                        {"title": "a", "url": "u1", "content": "c", "raw_content": "c", "score": 1.0, "source_type": "academic", "pdf_url": "p1"},
+                        {"title": "b", "url": "u2", "content": "c", "raw_content": "c", "score": 0.9, "source_type": "academic", "pdf_url": "p2"},
+                        {"title": "c", "url": "u3", "content": "c", "raw_content": "c", "score": 0.8, "source_type": "academic", "pdf_url": "p3"},
                     ],
                     "backend": "arxiv",
                     "answer": None,
@@ -129,40 +84,22 @@ class ResearchTaskExecutorTests(unittest.TestCase):
                 None,
                 "arxiv",
             ),
-        ]
-
-        with patch(
-            "execution.research_task_executor.dispatch_capability_search",
-            side_effect=responses,
         ):
             result = consume(executor.execute(state, task, emit_stream=False))
 
-        self.assertEqual(result.task_patch.attempt_count, 2)
-        self.assertEqual(result.task_patch.search_backend, "local_library+arxiv")
-        self.assertTrue(result.task_patch.needs_followup)
-        self.assertEqual(
-            result.task_patch.current_capability,
-            SEARCH_ACADEMIC_PAPERS_CAPABILITY,
-        )
+        self.assertEqual(result.task_patch.attempt_count, 1)
+        self.assertEqual(result.task_patch.search_backend, "arxiv")
+        self.assertEqual(result.task_patch.planned_capabilities, [SEARCH_ACADEMIC_PAPERS_CAPABILITY])
+        self.assertEqual(result.task_patch.current_capability, SEARCH_ACADEMIC_PAPERS_CAPABILITY)
         self.assertIsNone(result.task_patch.evidence_gap_reason)
 
-    def test_local_academic_web_stop(self) -> None:
+    def test_academic_then_web_stop(self) -> None:
         executor = self._make_executor(
-            [
-                SEARCH_LOCAL_DOCS_CAPABILITY,
-                SEARCH_ACADEMIC_PAPERS_CAPABILITY,
-                SEARCH_WEB_PAGES_CAPABILITY,
-            ]
+            [SEARCH_ACADEMIC_PAPERS_CAPABILITY, SEARCH_WEB_PAGES_CAPABILITY]
         )
         state = SummaryState(research_topic="topic")
         task = TodoItem(id=1, title="任务", intent="目标", query="query")
         responses = [
-            (
-                {"results": [], "backend": "local_library", "answer": None, "notices": []},
-                [],
-                None,
-                "local_library",
-            ),
             (
                 {
                     "results": [
@@ -199,15 +136,18 @@ class ResearchTaskExecutorTests(unittest.TestCase):
         ):
             result = consume(executor.execute(state, task, emit_stream=False))
 
-        self.assertEqual(result.task_patch.attempt_count, 3)
-        self.assertEqual(result.task_patch.search_backend, "local_library+arxiv+advanced")
+        self.assertEqual(result.task_patch.attempt_count, 2)
+        self.assertEqual(result.task_patch.search_backend, "arxiv+advanced")
         self.assertTrue(result.task_patch.needs_followup)
+        self.assertEqual(
+            result.task_patch.current_capability,
+            SEARCH_WEB_PAGES_CAPABILITY,
+        )
         self.assertIsNone(result.task_patch.evidence_gap_reason)
 
-    def test_local_academic_web_terminal_insufficient(self) -> None:
+    def test_academic_web_stop(self) -> None:
         executor = self._make_executor(
             [
-                SEARCH_LOCAL_DOCS_CAPABILITY,
                 SEARCH_ACADEMIC_PAPERS_CAPABILITY,
                 SEARCH_WEB_PAGES_CAPABILITY,
             ]
@@ -216,11 +156,56 @@ class ResearchTaskExecutorTests(unittest.TestCase):
         task = TodoItem(id=1, title="任务", intent="目标", query="query")
         responses = [
             (
-                {"results": [], "backend": "local_library", "answer": None, "notices": []},
+                {
+                    "results": [
+                        {"title": "p1", "url": "p1", "content": "abs", "raw_content": "abs", "score": 1.0, "source_type": "academic", "pdf_url": "pdf1"}
+                    ],
+                    "backend": "arxiv",
+                    "answer": None,
+                    "notices": [],
+                },
                 [],
                 None,
-                "local_library",
+                "arxiv",
             ),
+            (
+                {
+                    "results": [
+                        {"title": "w1", "url": "w1", "content": "c", "raw_content": "c", "score": 0.7, "source_type": "web_search"},
+                        {"title": "w2", "url": "w2", "content": "c", "raw_content": "c", "score": 0.6, "source_type": "web_search"},
+                        {"title": "w3", "url": "w3", "content": "c", "raw_content": "c", "score": 0.5, "source_type": "web_search"},
+                    ],
+                    "backend": "advanced",
+                    "answer": None,
+                    "notices": [],
+                },
+                [],
+                None,
+                "advanced",
+            ),
+        ]
+
+        with patch(
+            "execution.research_task_executor.dispatch_capability_search",
+            side_effect=responses,
+        ):
+            result = consume(executor.execute(state, task, emit_stream=False))
+
+        self.assertEqual(result.task_patch.attempt_count, 2)
+        self.assertEqual(result.task_patch.search_backend, "arxiv+advanced")
+        self.assertTrue(result.task_patch.needs_followup)
+        self.assertIsNone(result.task_patch.evidence_gap_reason)
+
+    def test_academic_web_terminal_insufficient(self) -> None:
+        executor = self._make_executor(
+            [
+                SEARCH_ACADEMIC_PAPERS_CAPABILITY,
+                SEARCH_WEB_PAGES_CAPABILITY,
+            ]
+        )
+        state = SummaryState(research_topic="topic")
+        task = TodoItem(id=1, title="任务", intent="目标", query="query")
+        responses = [
             (
                 {
                     "results": [
@@ -255,7 +240,7 @@ class ResearchTaskExecutorTests(unittest.TestCase):
         ):
             result = consume(executor.execute(state, task, emit_stream=False))
 
-        self.assertEqual(result.task_patch.attempt_count, 3)
+        self.assertEqual(result.task_patch.attempt_count, 2)
         self.assertEqual(
             result.task_patch.evidence_gap_reason,
             "terminal_insufficient_evidence",

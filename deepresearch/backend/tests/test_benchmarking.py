@@ -17,10 +17,10 @@ from benchmarking import (
 
 class BenchmarkingTest(unittest.TestCase):
     def test_extract_source_types_from_summary(self) -> None:
-        summary = "来源类型统计：\n- 本地资料库：3\n- 学术论文：2\n- GitHub 仓库：1"
+        summary = "来源类型统计：\n- 学术论文：2\n- GitHub 仓库：1"
         self.assertEqual(
             extract_source_types_from_summary(summary),
-            ["local_library", "academic", "github"],
+            ["academic", "github"],
         )
 
     def test_aggregate_todo_items_collects_route_and_sources(self) -> None:
@@ -30,11 +30,11 @@ class BenchmarkingTest(unittest.TestCase):
                     "status": "completed",
                     "evidence_count": 3,
                     "top_score": 0.9,
-                    "planned_capabilities": ["search_local_docs", "search_academic_papers"],
+                    "planned_capabilities": ["search_academic_papers"],
                     "current_capability": "search_academic_papers",
-                    "search_backend": "local_library+arxiv",
+                    "search_backend": "arxiv",
                     "evidence_gap_reason": "",
-                    "sources_summary": "来源类型统计：\n- 本地资料库：2\n- 学术论文：1",
+                    "sources_summary": "来源类型统计：\n- 学术论文：1",
                 },
                 {
                     "status": "completed",
@@ -51,11 +51,11 @@ class BenchmarkingTest(unittest.TestCase):
 
         self.assertEqual(
             aggregated["planned_capabilities"],
-            ["search_local_docs", "search_academic_papers", "search_web_pages"],
+            ["search_academic_papers", "search_web_pages"],
         )
         self.assertEqual(
             aggregated["source_types"],
-            ["local_library", "academic", "web_search"],
+            ["academic", "web_search"],
         )
         self.assertIn("terminal_insufficient_evidence", aggregated["gap_reasons"])
         self.assertEqual(aggregated["total_evidence_count"], 5)
@@ -63,8 +63,8 @@ class BenchmarkingTest(unittest.TestCase):
     def test_score_case_marks_pass_when_expectations_met(self) -> None:
         case = {
             "id": "acad_001",
-            "expected_route_contains": ["search_local_docs"],
-            "expected_source_types": ["local_library"],
+            "expected_route_contains": ["search_academic_papers"],
+            "expected_source_types": ["academic"],
             "expected_gap_reason": None,
             "must_have_keywords": ["Self-RAG", "critique"],
             "forbidden_patterns": ["没有来源"],
@@ -74,8 +74,8 @@ class BenchmarkingTest(unittest.TestCase):
             "id": "acad_001",
             "status": "completed",
             "aggregated": {
-                "planned_capabilities": ["search_local_docs", "search_academic_papers"],
-                "source_types": ["local_library"],
+                "planned_capabilities": ["search_academic_papers"],
+                "source_types": ["academic"],
                 "gap_reasons": [],
             },
             "response": {

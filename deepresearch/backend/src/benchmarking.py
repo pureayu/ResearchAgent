@@ -13,7 +13,6 @@ from config import Configuration
 from models import TodoItem
 
 SOURCE_LABEL_TO_TYPE = {
-    "本地资料库": "local_library",
     "学术论文": "academic",
     "GitHub 仓库": "github",
     "联网网页": "web_search",

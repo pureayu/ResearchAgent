@@ -78,19 +78,18 @@ def _format_source_type_summary(search_result: dict[str, Any] | None) -> str:
         return ""
 
     label_map = {
-        "local_library": "本地资料库",
         "academic": "学术论文",
         "github": "GitHub 仓库",
         "web_search": "联网网页",
     }
 
     ordered = []
-    for key in ("local_library", "academic", "github", "web_search"):
+    for key in ("academic", "github", "web_search"):
         if key in counts:
             ordered.append(f"- {label_map.get(key, key)}：{counts[key]}")
 
     for key, value in counts.items():
-        if key in {"local_library", "academic", "github", "web_search"}:
+        if key in {"academic", "github", "web_search"}:
             continue
         ordered.append(f"- {label_map.get(key, key)}：{value}")
 

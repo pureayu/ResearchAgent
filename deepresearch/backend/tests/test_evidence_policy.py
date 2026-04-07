@@ -10,7 +10,6 @@ if str(SRC_ROOT) not in sys.path:
 from capability_types import (
     INSPECT_GITHUB_REPO_CAPABILITY,
     SEARCH_ACADEMIC_PAPERS_CAPABILITY,
-    SEARCH_LOCAL_DOCS_CAPABILITY,
     SEARCH_WEB_PAGES_CAPABILITY,
 )
 from config import Configuration
@@ -20,29 +19,6 @@ from execution.evidence_policy import EvidencePolicy
 class EvidencePolicyTests(unittest.TestCase):
     def setUp(self) -> None:
         self.policy = EvidencePolicy(Configuration())
-
-    def test_local_enough_stops(self) -> None:
-        result = {
-            "results": [
-                {"title": "a", "score": 0.9, "source_type": "local_library"},
-                {"title": "b", "score": 0.8, "source_type": "local_library"},
-                {"title": "c", "score": 0.7, "source_type": "local_library"},
-            ]
-        }
-
-        self.assertIsNone(
-            self.policy.assess_evidence_gap("query", result, SEARCH_LOCAL_DOCS_CAPABILITY)
-        )
-
-    def test_local_insufficient_upgrades(self) -> None:
-        result = {
-            "results": [{"title": "a", "score": 0.9, "source_type": "local_library"}]
-        }
-
-        self.assertEqual(
-            self.policy.assess_evidence_gap("query", result, SEARCH_LOCAL_DOCS_CAPABILITY),
-            "insufficient_local_coverage",
-        )
 
     def test_academic_metadata_gap_upgrades(self) -> None:
         result = {
