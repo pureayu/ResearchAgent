@@ -149,20 +149,6 @@ class ContextStubMemoryService(StubMemoryService):
             return list(self._profile_candidates)
         return list(self._global_candidates)
 
-    def _rerank_recalled_facts(
-        self,
-        topic: str,
-        *,
-        profile_candidates,
-        global_candidates,
-        limit=5,
-    ):
-        del topic, limit
-        return {
-            "profile_facts": list(profile_candidates),
-            "global_facts": list(global_candidates),
-        }
-
 
 class MemoryServiceTests(unittest.TestCase):
     def test_extract_profile_facts_uses_llm_and_defaults_to_profile_scope(self) -> None:
@@ -207,12 +193,11 @@ class MemoryServiceTests(unittest.TestCase):
 
         self.assertEqual(prepared["memory_scope"], PROFILE_MEMORY_SCOPE)
 
-    def test_rerank_fallback_uses_similarity_confidence_and_recency(self) -> None:
+    def test_sorted_fact_candidates_use_similarity_confidence_and_recency(self) -> None:
         service = StubMemoryService()
 
-        result = service._rerank_recalled_facts(
-            "topic",
-            profile_candidates=[
+        result = service._sorted_fact_candidates(
+            [
                 {
                     "fact_id": "older",
                     "fact": "old",
@@ -229,40 +214,13 @@ class MemoryServiceTests(unittest.TestCase):
                     "stability_score": 0.10,
                     "last_verified_at": datetime(2025, 1, 1, tzinfo=timezone.utc),
                 },
-            ],
-            global_candidates=[],
+            ]
         )
 
         self.assertEqual(
-            [item["fact_id"] for item in result["profile_facts"]],
+            [item["fact_id"] for item in result],
             ["best", "older"],
         )
-
-    def test_rerank_uses_model_selected_ids_when_available(self) -> None:
-        service = StubMemoryService(
-            llm_content="""
-            {
-              "profile_fact_ids": ["profile_1"],
-              "global_fact_ids": []
-            }
-            """,
-        )
-
-        result = service._rerank_recalled_facts(
-            "topic",
-            profile_candidates=[
-                {"fact_id": "profile_1", "fact": "p1", "similarity": 0.4},
-            ],
-            global_candidates=[
-                {"fact_id": "global_1", "fact": "g1", "similarity": 0.9},
-            ],
-        )
-
-        self.assertEqual(
-            [item["fact_id"] for item in result["profile_facts"]],
-            ["profile_1"],
-        )
-        self.assertEqual(result["global_facts"], [])
 
     def test_save_semantic_facts_updates_existing_fact_instead_of_inserting(self) -> None:
         connection = RecordingConnection(existing_fact={"fact_id": "existing_fact"})

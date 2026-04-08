@@ -21,7 +21,6 @@ except ImportError:
 from config import Configuration
 from models import SummaryState, TodoItem
 from prompts import (
-    memory_fact_rerank_instructions,
     profile_fact_extraction_instructions,
     semantic_fact_extraction_instructions,
     working_memory_compaction_instructions,
@@ -451,117 +450,11 @@ class BaseMemoryService:
         merged = " ".join(texts).lower()
         return any(token in merged for token in MEDICAL_MEMORY_KEYWORDS)
 
-    def _rerank_recalled_facts(
-        self,
-        topic: str,
-        *,
-        profile_candidates: list[dict[str, Any]],
-        global_candidates: list[dict[str, Any]],
-        limit: int = MEMORY_RESULT_LIMIT,
-    ) -> dict[str, list[dict[str, Any]]]:
-        """Rerank long-term memory candidates with LLM selection and deterministic fallback."""
-
-        fallback = {
-            "profile_facts": self._sorted_fact_candidates(profile_candidates)[:limit],
-            "global_facts": self._sorted_fact_candidates(global_candidates)[:limit],
-        }
-        if not any(fallback.values()):
-            return fallback
-
-        payload = self._run_json_completion(
-            system_prompt=memory_fact_rerank_instructions,
-            user_content=json.dumps(
-                {
-                    "topic": topic,
-                    "profile_facts": [
-                        self._serialize_fact_candidate(item)
-                        for item in profile_candidates
-                    ],
-                    "global_facts": [
-                        self._serialize_fact_candidate(item)
-                        for item in global_candidates
-                    ],
-                },
-                ensure_ascii=False,
-                default=self._json_default,
-            ),
-        )
-        selection = self._extract_rerank_selection(payload)
-        if selection is None:
-            return fallback
-
-        results: dict[str, list[dict[str, Any]]] = {}
-        scope_map = {
-            "profile_facts": profile_candidates,
-            "global_facts": global_candidates,
-        }
-        for result_key, selection_key in (
-            ("profile_facts", "profile_fact_ids"),
-            ("global_facts", "global_fact_ids"),
-        ):
-            selected = self._select_fact_candidates(
-                scope_map[result_key],
-                selection[selection_key],
-                limit=limit,
-            )
-            if not selected and selection[selection_key]:
-                results[result_key] = fallback[result_key]
-            else:
-                results[result_key] = selected
-        return results
-
-    def _extract_rerank_selection(
-        self,
-        payload: dict[str, Any] | list | None,
-    ) -> dict[str, list[str]] | None:
-        """Parse LLM rerank output into per-scope fact-id lists."""
-
-        if not isinstance(payload, dict):
-            return None
-
-        selection: dict[str, list[str]] = {}
-        for key in ("profile_fact_ids", "global_fact_ids"):
-            value = payload.get(key, [])
-            if value is None:
-                value = []
-            if not isinstance(value, list):
-                return None
-            selection[key] = [str(item).strip() for item in value if str(item).strip()]
-        return selection
-
-    def _select_fact_candidates(
-        self,
-        candidates: list[dict[str, Any]],
-        fact_ids: list[str],
-        *,
-        limit: int,
-    ) -> list[dict[str, Any]]:
-        """Return candidates in the exact order selected by the reranker."""
-
-        indexed = {
-            str(item.get("fact_id") or "").strip(): item
-            for item in candidates
-            if str(item.get("fact_id") or "").strip()
-        }
-        selected: list[dict[str, Any]] = []
-        seen_ids: set[str] = set()
-        for fact_id in fact_ids:
-            if fact_id in seen_ids:
-                continue
-            item = indexed.get(fact_id)
-            if item is None:
-                continue
-            selected.append(item)
-            seen_ids.add(fact_id)
-            if len(selected) >= limit:
-                break
-        return selected
-
     def _sorted_fact_candidates(
         self,
         candidates: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
-        """Deterministically rank fact candidates when rerank is unavailable."""
+        """Deterministically rank fact candidates for direct recall use."""
 
         return sorted(
             candidates,
@@ -591,29 +484,6 @@ class BaseMemoryService:
             except ValueError:
                 return 0.0
         return 0.0
-
-    def _serialize_fact_candidate(self, item: dict[str, Any]) -> dict[str, Any]:
-        """Reduce fact candidate payloads before sending them to the reranker."""
-
-        return {
-            "fact_id": item.get("fact_id"),
-            "scope": item.get("scope"),
-            "subject": item.get("subject"),
-            "fact": item.get("fact"),
-            "memory_scope": item.get("memory_scope"),
-            "similarity": item.get("similarity"),
-            "confidence": item.get("confidence"),
-            "stability_score": item.get("stability_score"),
-            "sensitivity": item.get("sensitivity"),
-            "last_verified_at": item.get("last_verified_at"),
-        }
-
-    def _json_default(self, value: Any) -> str:
-        """Serialize otherwise non-JSON-native values for rerank prompts."""
-
-        if isinstance(value, datetime):
-            return value.isoformat()
-        return str(value)
 
     def _extract_json_payload(self, text: str) -> dict[str, Any] | list | None:
         """Best-effort extraction of a JSON object or array from model output."""
@@ -1197,13 +1067,8 @@ class MemoryService(BaseMemoryService):
                 memory_scope=GLOBAL_MEMORY_SCOPE,
                 limit=MEMORY_CANDIDATE_LIMIT,
             )
-            reranked = self._rerank_recalled_facts(
-                topic,
-                profile_candidates=profile_candidates,
-                global_candidates=global_candidates,
-            )
-            profile_facts = reranked["profile_facts"]
-            global_facts = reranked["global_facts"]
+            profile_facts = self._sorted_fact_candidates(profile_candidates)[:MEMORY_RESULT_LIMIT]
+            global_facts = self._sorted_fact_candidates(global_candidates)[:MEMORY_RESULT_LIMIT]
 
         return {
             "working_memory_summary": working_memory_summary,

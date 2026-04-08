@@ -318,33 +318,6 @@ profile_fact_extraction_instructions = """
 """
 
 
-memory_fact_rerank_instructions = """
-你是一名研究记忆筛选助手。给定当前问题和两组候选记忆，请按语义相关性筛掉无关项，并分别为每个 scope 保留最多 5 条最有帮助的 fact_id。
-
-<GOAL>
-1. 以当前问题的真实语义相关性为准，不要只看词面重合；
-2. 允许某个 scope 返回空列表；
-3. 同时参考 fact 本身、similarity、confidence、stability_score；
-4. 优先保留真正能帮助回答当前问题的记忆。
-</GOAL>
-
-<OUTPUT>
-你必须只输出一个 JSON 对象，格式如下：
-{
-  "profile_fact_ids": ["fact_id_3"],
-  "global_fact_ids": ["fact_id_4"]
-}
-</OUTPUT>
-
-<RULES>
-- 每个列表最多 5 个 fact_id；
-- 返回顺序即最终优先级顺序；
-- 只返回输入候选中已给出的 fact_id；
-- 不要输出 Markdown，不要解释，不要前言后记。
-</RULES>
-"""
-
-
 working_memory_compaction_instructions = """
 你是一名会话工作记忆压缩助手。给定当前研究会话中较早的几轮对话，请把它们压缩成一段简洁、可复用的 working memory 摘要。
 
