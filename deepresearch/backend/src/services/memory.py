@@ -1143,15 +1143,12 @@ class MemoryService(BaseMemoryService):
     ) -> dict[str, Any]:
         """Load recalled memory context for a new topic."""
 
-        session_runs: list[dict[str, Any]] = []
         working_memory_summary = ""
         recent_turns: list[dict[str, Any]] = []
         profile_facts: list[dict[str, Any]] = []
         global_facts: list[dict[str, Any]] = []
 
-        #如果这次有 session_id，就先去数据库找这个 session 最近 3 次研究 run
         with self._connect() as connection:
-            run_rows: list[dict[str, Any]] = []
             if session_id:
                 working_memory_row = connection.execute(
                     """
@@ -1164,32 +1161,6 @@ class MemoryService(BaseMemoryService):
                 working_memory_summary = str(
                     (working_memory_row or {}).get("working_memory_summary") or ""
                 ).strip()
-
-                sql = """
-                    SELECT run_id, session_id, topic, started_at, finished_at, final_report, task_count
-                    FROM research_runs
-                    WHERE session_id = %s
-                """
-                params: list[Any] = [session_id]
-                if exclude_run_id:
-                    sql += " AND run_id != %s"
-                    params.append(exclude_run_id)
-                sql += " ORDER BY started_at DESC LIMIT 3"
-                run_rows = connection.execute(sql, params).fetchall()
-
-            for row in run_rows:
-                final_report = row["final_report"] or ""
-                session_runs.append(
-                    {
-                        "run_id": row["run_id"],
-                        "session_id": row["session_id"],
-                        "topic": row["topic"],
-                        "started_at": row["started_at"],
-                        "finished_at": row["finished_at"],
-                        "task_count": row["task_count"],
-                        "report_excerpt": final_report[:600],
-                    }
-                )
 
             profile_candidates: list[dict[str, Any]] = []
             global_candidates: list[dict[str, Any]] = []
@@ -1235,7 +1206,6 @@ class MemoryService(BaseMemoryService):
             global_facts = reranked["global_facts"]
 
         return {
-            "session_runs": session_runs,
             "working_memory_summary": working_memory_summary,
             "recent_turns": recent_turns,
             "profile_facts": profile_facts,

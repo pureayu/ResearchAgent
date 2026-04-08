@@ -95,15 +95,6 @@ class ReviewerService:
 
         sections: list[str] = []
 
-        session_runs = recalled_context.get("session_runs") or []
-        if session_runs:
-            lines = ["最近研究轮次："]
-            for idx, run in enumerate(session_runs[:3], start=1):
-                lines.append(
-                    f"{idx}. 主题：{run.get('topic') or '未知主题'}；完成时间：{run.get('finished_at') or '未完成'}"
-                )
-            sections.append("\n".join(lines))
-
         working_memory_summary = str(recalled_context.get("working_memory_summary") or "").strip()
         if working_memory_summary:
             sections.append(f"当前会话工作记忆摘要：\n{working_memory_summary}")

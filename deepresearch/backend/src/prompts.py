@@ -22,7 +22,6 @@ todo_planner_system_prompt = """
 
 <MEMORY_POLICY>
 - 你可能会收到同一研究会话的最近上下文，包括：
-  - `session_runs`：最近几轮研究的整体主题、完成时间、报告摘要；
   - `working_memory_summary`：更早会话内容压缩后的工作记忆摘要；
   - `recent_turns`：最近几轮用户问题与最终回答；
   - `profile_facts`：用户长期目标、偏好、约束、关注主题；
@@ -454,14 +453,13 @@ memory_recall_selector_instructions = """
 你是一名会话记忆选择助手。给定用户当前问题，以及一批来自历史研究和用户画像的候选记忆，请选出最适合用于“回忆型回答”的素材。
 
 <GOAL>
-1. 优先选择能证明“之前确实聊过/研究过”的历史 run、task、session fact；
+1. 优先选择能证明“之前确实聊过/研究过”的任务记录、工作记忆摘要或最近对话；
 2. 当问题在问用户自己的长期偏好、目标、约束时，可以选择 profile fact；
 3. 不要选择只是词面接近、但实际无法帮助回忆回答的素材；
 4. 返回尽量少而精的 ID，避免把无关候选都选上。
 </GOAL>
 
 <RULES>
-- `run_ids` 最多 3 个；
 - `task_ids` 最多 5 个；
 - `fact_ids` 最多 5 个；
 - 只返回输入候选里已有的 ID；
@@ -472,7 +470,6 @@ memory_recall_selector_instructions = """
 <OUTPUT>
 你必须只输出一个 JSON 对象，格式如下：
 {
-  "run_ids": ["run_1"],
   "task_ids": ["101", "102"],
   "fact_ids": ["fact_1", "fact_2"]
 }

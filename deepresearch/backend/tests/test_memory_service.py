@@ -330,12 +330,13 @@ class MemoryServiceTests(unittest.TestCase):
 
         context = service.load_relevant_context("session-1", "端侧推理")
 
-        self.assertIn("session_runs", context)
+        self.assertNotIn("session_runs", context)
         self.assertEqual(context["working_memory_summary"], "历史摘要")
         self.assertEqual(len(context["recent_turns"]), 1)
         self.assertNotIn("recent_tasks", context)
         executed_sql = [sql for sql, _ in connection.statements]
         self.assertFalse(any("FROM task_memories" in sql for sql in executed_sql))
+        self.assertFalse(any("FROM research_runs" in sql for sql in executed_sql))
 
     def test_save_session_turn_inserts_turn_record(self) -> None:
         connection = RecordingConnection()

@@ -118,25 +118,11 @@ class SpecialModeExecutorTests(unittest.TestCase):
     def test_memory_recall_uses_selector_output(self) -> None:
         executor = self._make_executor(
             selector_responses=(
-                '{"run_ids":["run-1"],"task_ids":["101"],"fact_ids":["session-1","profile-1"]}',
+                '{"task_ids":["101"],"fact_ids":["profile-1"]}',
             ),
         )
         state = SummaryState(
             recalled_context={
-                "session_runs": [
-                    {
-                        "run_id": "run-1",
-                        "topic": "RAG 延迟调研",
-                        "finished_at": "2026-03-31T10:00:00+08:00",
-                        "report_excerpt": "延迟与召回质量之间存在明显 tradeoff。",
-                    },
-                    {
-                        "run_id": "run-2",
-                        "topic": "无关主题",
-                        "finished_at": "2026-03-30T10:00:00+08:00",
-                        "report_excerpt": "无关内容",
-                    },
-                ],
                 "task_logs": [
                     {
                         "run_id": "run-1",
@@ -173,26 +159,16 @@ class SpecialModeExecutorTests(unittest.TestCase):
             "你还记得之前关于延迟的研究吗",
         )
 
-        self.assertIn("RAG 延迟调研", summary)
         self.assertIn("用户长期关注端侧部署和延迟。", summary)
         self.assertIn("分析端到端延迟", summary)
-        self.assertNotIn("无关主题", summary)
         self.assertIn("会话工作记忆摘要", summary)
         self.assertIn("Source: 用户画像记忆 1", sources_summary)
-        self.assertGreaterEqual(evidence_count, 4)
+        self.assertGreaterEqual(evidence_count, 3)
 
     def test_memory_recall_selector_fallback_uses_simple_recency(self) -> None:
         executor = self._make_executor(selector_responses=("not json",))
         state = SummaryState(
             recalled_context={
-                "session_runs": [
-                    {
-                        "run_id": "run-1",
-                        "topic": "最近一次研究",
-                        "finished_at": "2026-03-31T10:00:00+08:00",
-                        "report_excerpt": "最近摘要",
-                    }
-                ],
                 "task_logs": [
                     {
                         "run_id": "run-1",
@@ -214,9 +190,8 @@ class SpecialModeExecutorTests(unittest.TestCase):
 
         summary, _, _ = executor._build_memory_recall_answer(state, "还记得最近那次研究吗")
 
-        self.assertIn("最近一次研究", summary)
         self.assertIn("最近任务", summary)
-        self.assertNotIn("更老的任务", summary)
+        self.assertIn("更老的任务", summary)
         self.assertIn("用户偏好中文回答", summary)
         self.assertIn("工作记忆", summary)
 
@@ -236,7 +211,7 @@ class SpecialModeExecutorTests(unittest.TestCase):
 
         executor = self._make_executor(
             selector_responses=(
-                '{"run_ids":["run-1"],"task_ids":["101"],"fact_ids":[]}',
+                '{"task_ids":["101"],"fact_ids":[]}',
             ),
             task_log_loader=load_task_logs,
         )
@@ -244,14 +219,6 @@ class SpecialModeExecutorTests(unittest.TestCase):
             session_id="session-1",
             run_id="run-2",
             recalled_context={
-                "session_runs": [
-                    {
-                        "run_id": "run-1",
-                        "topic": "RAG 延迟调研",
-                        "finished_at": "2026-03-31T10:00:00+08:00",
-                        "report_excerpt": "延迟与召回质量之间存在明显 tradeoff。",
-                    }
-                ],
                 "working_memory_summary": "检索质量和延迟之间存在明显 tradeoff。",
             },
         )

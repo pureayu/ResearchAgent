@@ -69,28 +69,12 @@ class PlanningService:
         if not recalled_context:
             return "无"
 
-        session_runs = recalled_context.get("session_runs") or []
         working_memory_summary = str(recalled_context.get("working_memory_summary") or "").strip()
         recent_turns = recalled_context.get("recent_turns") or []
         profile_facts = recalled_context.get("profile_facts") or []
         global_facts = recalled_context.get("global_facts") or []
 
         sections: list[str] = []
-
-        if session_runs:
-            lines = ["最近研究轮次："]
-            for idx, run in enumerate(session_runs[:3], start=1):
-                topic = str(run.get("topic") or "未知主题").strip()
-                finished_at = str(run.get("finished_at") or "未完成").strip()
-                task_count = run.get("task_count")
-                excerpt = str(run.get("report_excerpt") or "").strip()
-                excerpt = excerpt[:180] + ("..." if len(excerpt) > 180 else "")
-                lines.append(
-                    f"{idx}. 主题：{topic}；完成时间：{finished_at}；任务数：{task_count}"
-                )
-                if excerpt:
-                    lines.append(f"   报告摘要：{excerpt}")
-            sections.append("\n".join(lines))
 
         if working_memory_summary:
             sections.append(f"当前会话工作记忆摘要：\n{working_memory_summary}")
