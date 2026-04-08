@@ -24,9 +24,9 @@ from prompts import (
     memory_fact_rerank_instructions,
     profile_fact_extraction_instructions,
     semantic_fact_extraction_instructions,
+    working_memory_compaction_instructions,
 )
 
-SESSION_MEMORY_SCOPE = "session"
 GLOBAL_MEMORY_SCOPE = "global"
 PROFILE_MEMORY_SCOPE = "profile"
 LOW_SENSITIVITY = "low"
@@ -39,6 +39,8 @@ MEMORY_CANDIDATE_LIMIT = 8
 MEMORY_RESULT_LIMIT = 5
 PROFILE_EXTRACTION_LIMIT = 4
 SEMANTIC_EXTRACTION_LIMIT = 8
+WORKING_MEMORY_RECENT_TURN_LIMIT = 3
+WORKING_MEMORY_HISTORY_LIMIT = 12
 
 MEDICAL_MEMORY_KEYWORDS = {
     "药",
@@ -255,11 +257,7 @@ class BaseMemoryService:
         """Normalize memory scope labels from LLM outputs."""
 
         memory_scope = str(value or "").strip().lower()
-        if memory_scope in {
-            SESSION_MEMORY_SCOPE,
-            GLOBAL_MEMORY_SCOPE,
-            PROFILE_MEMORY_SCOPE,
-        }:
+        if memory_scope in {GLOBAL_MEMORY_SCOPE, PROFILE_MEMORY_SCOPE}:
             return memory_scope
         return None
 
@@ -291,11 +289,86 @@ class BaseMemoryService:
         topic: str,
         report: str,
     ) -> list[dict[str, Any]]:
-        """Extract and persist semantic facts derived from a final report."""
+        """Extract and persist global semantic facts derived from a final report."""
 
         facts = self.extract_semantic_facts(report, topic)
-        self.save_semantic_facts(run_id, topic, facts)
-        return facts
+        global_facts = [
+            item
+            for item in facts
+            if self._guardrail_memory_scope(
+                requested_scope=self._normalize_memory_scope(item.get("memory_scope")),
+                topic=topic,
+                subject=str(item.get("subject") or "").strip() or topic,
+                fact=str(item.get("fact") or "").strip(),
+                confidence=self._clamp_score(item.get("confidence"), default=0.0),
+                stability_score=self._clamp_score(
+                    item.get("stability_score"),
+                    default=self._clamp_score(item.get("confidence"), default=0.0),
+                ),
+                sensitivity=(
+                    self._normalize_sensitivity(item.get("sensitivity"))
+                    or self._infer_fact_sensitivity(
+                        topic,
+                        str(item.get("subject") or "").strip() or topic,
+                        str(item.get("fact") or "").strip(),
+                    )
+                ),
+            )
+            == GLOBAL_MEMORY_SCOPE
+        ]
+        self.save_semantic_facts(run_id, topic, global_facts)
+        return global_facts
+
+    def build_working_memory_summary(
+        self,
+        *,
+        session_topic: str,
+        older_turns: list[dict[str, Any]],
+    ) -> str:
+        """Summarize older session turns into a compact working-memory block."""
+
+        if not older_turns:
+            return ""
+
+        serialized_turns: list[str] = []
+        for idx, turn in enumerate(older_turns, start=1):
+            user_query = str(turn.get("user_query") or "").strip()
+            assistant_response = str(turn.get("assistant_response") or "").strip()
+            response_mode = str(turn.get("response_mode") or "").strip() or "unknown"
+            created_at = str(turn.get("created_at") or "").strip()
+            serialized_turns.append(
+                "\n".join(
+                    [
+                        f"[历史轮次 {idx}]",
+                        f"- 时间：{created_at[:19] if created_at else 'unknown'}",
+                        f"- 模式：{response_mode}",
+                        f"- 用户问题：{user_query[:300]}",
+                        f"- 最终回答：{assistant_response[:700]}",
+                    ]
+                )
+            )
+
+        payload = self._run_json_completion(
+            system_prompt=working_memory_compaction_instructions,
+            user_content=(
+                f"会话主题：{session_topic}\n\n"
+                "需要压缩的历史轮次：\n"
+                + "\n\n".join(serialized_turns)
+            ),
+        )
+        if isinstance(payload, dict):
+            summary = str(payload.get("summary") or "").strip()
+            if summary:
+                return summary
+
+        fallback_lines = ["历史工作记忆摘要："]
+        for idx, turn in enumerate(older_turns[:5], start=1):
+            user_query = str(turn.get("user_query") or "").strip()
+            assistant_response = str(turn.get("assistant_response") or "").strip()
+            fallback_lines.append(
+                f"{idx}. 问题：{user_query[:120]}；结论：{assistant_response[:200]}"
+            )
+        return "\n".join(fallback_lines)
     #代码规范化，合法化检查以及memory_scope检查
     def _prepare_semantic_fact(
         self,
@@ -352,7 +425,7 @@ class BaseMemoryService:
     ) -> str:
         """Apply minimal scope guardrails while keeping model-produced scope as primary."""
 
-        memory_scope = requested_scope or SESSION_MEMORY_SCOPE
+        memory_scope = requested_scope or PROFILE_MEMORY_SCOPE
         if (
             memory_scope == GLOBAL_MEMORY_SCOPE
             and (
@@ -362,7 +435,7 @@ class BaseMemoryService:
                 or self._is_medical_or_drug_text(topic, subject, fact)
             )
         ):
-            return SESSION_MEMORY_SCOPE
+            return PROFILE_MEMORY_SCOPE
         return memory_scope
 
     def _infer_fact_sensitivity(self, topic: str, subject: str, fact: str) -> str:
@@ -382,15 +455,13 @@ class BaseMemoryService:
         self,
         topic: str,
         *,
-        session_candidates: list[dict[str, Any]],
         profile_candidates: list[dict[str, Any]],
         global_candidates: list[dict[str, Any]],
         limit: int = MEMORY_RESULT_LIMIT,
     ) -> dict[str, list[dict[str, Any]]]:
-        """Rerank per-scope fact candidates with LLM selection and deterministic fallback."""
+        """Rerank long-term memory candidates with LLM selection and deterministic fallback."""
 
         fallback = {
-            "session_facts": self._sorted_fact_candidates(session_candidates)[:limit],
             "profile_facts": self._sorted_fact_candidates(profile_candidates)[:limit],
             "global_facts": self._sorted_fact_candidates(global_candidates)[:limit],
         }
@@ -402,10 +473,6 @@ class BaseMemoryService:
             user_content=json.dumps(
                 {
                     "topic": topic,
-                    "session_facts": [
-                        self._serialize_fact_candidate(item)
-                        for item in session_candidates
-                    ],
                     "profile_facts": [
                         self._serialize_fact_candidate(item)
                         for item in profile_candidates
@@ -425,12 +492,10 @@ class BaseMemoryService:
 
         results: dict[str, list[dict[str, Any]]] = {}
         scope_map = {
-            "session_facts": session_candidates,
             "profile_facts": profile_candidates,
             "global_facts": global_candidates,
         }
         for result_key, selection_key in (
-            ("session_facts", "session_fact_ids"),
             ("profile_facts", "profile_fact_ids"),
             ("global_facts", "global_fact_ids"),
         ):
@@ -455,7 +520,7 @@ class BaseMemoryService:
             return None
 
         selection: dict[str, list[str]] = {}
-        for key in ("session_fact_ids", "profile_fact_ids", "global_fact_ids"):
+        for key in ("profile_fact_ids", "global_fact_ids"):
             value = payload.get(key, [])
             if value is None:
                 value = []
@@ -614,7 +679,8 @@ class MemoryService(BaseMemoryService):
                     topic TEXT NOT NULL,
                     created_at TIMESTAMPTZ NOT NULL,
                     updated_at TIMESTAMPTZ NOT NULL,
-                    last_run_id TEXT
+                    last_run_id TEXT,
+                    working_memory_summary TEXT
                 )
                 """
             )
@@ -629,6 +695,19 @@ class MemoryService(BaseMemoryService):
                     final_report TEXT,
                     report_note_id TEXT,
                     task_count INTEGER DEFAULT 0
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS session_turns (
+                    turn_id TEXT PRIMARY KEY,
+                    session_id TEXT NOT NULL,
+                    run_id TEXT NOT NULL,
+                    user_query TEXT NOT NULL,
+                    assistant_response TEXT NOT NULL,
+                    response_mode TEXT NOT NULL,
+                    created_at TIMESTAMPTZ NOT NULL
                 )
                 """
             )
@@ -667,7 +746,7 @@ class MemoryService(BaseMemoryService):
                     subject TEXT,
                     fact TEXT NOT NULL,
                     embedding vector,
-                    memory_scope TEXT NOT NULL DEFAULT 'session',
+                    memory_scope TEXT NOT NULL DEFAULT 'profile',
                     stability_score DOUBLE PRECISION DEFAULT 0.0,
                     sensitivity TEXT NOT NULL DEFAULT 'medium',
                     source_session_id TEXT,
@@ -676,6 +755,9 @@ class MemoryService(BaseMemoryService):
                     last_verified_at TIMESTAMPTZ NOT NULL
                 )
                 """
+            )
+            connection.execute(
+                "ALTER TABLE research_sessions ADD COLUMN IF NOT EXISTS working_memory_summary TEXT"
             )
             connection.execute(
                 "ALTER TABLE task_memories ADD COLUMN IF NOT EXISTS round_id INTEGER DEFAULT 1"
@@ -687,7 +769,10 @@ class MemoryService(BaseMemoryService):
                 "ALTER TABLE task_memories ADD COLUMN IF NOT EXISTS parent_task_id INTEGER"
             )
             connection.execute(
-                "ALTER TABLE semantic_facts ADD COLUMN IF NOT EXISTS memory_scope TEXT NOT NULL DEFAULT 'session'"
+                "ALTER TABLE semantic_facts ADD COLUMN IF NOT EXISTS memory_scope TEXT NOT NULL DEFAULT 'profile'"
+            )
+            connection.execute(
+                "ALTER TABLE semantic_facts ALTER COLUMN memory_scope SET DEFAULT 'profile'"
             )
             connection.execute(
                 "ALTER TABLE semantic_facts ADD COLUMN IF NOT EXISTS stability_score DOUBLE PRECISION DEFAULT 0.0"
@@ -697,6 +782,12 @@ class MemoryService(BaseMemoryService):
             )
             connection.execute(
                 "ALTER TABLE semantic_facts ADD COLUMN IF NOT EXISTS source_session_id TEXT"
+            )
+            connection.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_session_turns_session_created
+                ON session_turns (session_id, created_at DESC)
+                """
             )
             connection.execute(
                 """
@@ -722,7 +813,7 @@ class MemoryService(BaseMemoryService):
                 SET memory_scope = %s
                 WHERE memory_scope IS NULL OR memory_scope = ''
                 """,
-                (SESSION_MEMORY_SCOPE,),
+                (PROFILE_MEMORY_SCOPE,),
             )
             connection.execute(
                 """
@@ -941,6 +1032,107 @@ class MemoryService(BaseMemoryService):
             for row in rows
         ]
 
+    def save_session_turn(
+        self,
+        state: SummaryState,
+        assistant_response: str,
+    ) -> None:
+        """Persist one completed user-query/assistant-response turn."""
+
+        if not state.session_id or not state.run_id or not state.research_topic:
+            return
+
+        created_at = datetime.now(timezone.utc).isoformat()
+        with self._connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO session_turns (
+                    turn_id,
+                    session_id,
+                    run_id,
+                    user_query,
+                    assistant_response,
+                    response_mode,
+                    created_at
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    uuid4().hex,
+                    state.session_id,
+                    state.run_id,
+                    state.research_topic,
+                    assistant_response,
+                    state.response_mode,
+                    created_at,
+                ),
+            )
+            connection.commit()
+
+    def refresh_working_memory(
+        self,
+        session_id: str | None,
+    ) -> dict[str, Any]:
+        """Refresh compact working memory for one session and return the latest view."""
+
+        if not session_id:
+            return {"working_memory_summary": "", "recent_turns": []}
+
+        with self._connect() as connection:
+            session_row = connection.execute(
+                """
+                SELECT topic
+                FROM research_sessions
+                WHERE session_id = %s
+                """,
+                (session_id,),
+            ).fetchone()
+            session_topic = str((session_row or {}).get("topic") or "").strip()
+            rows = connection.execute(
+                """
+                SELECT run_id, user_query, assistant_response, response_mode, created_at
+                FROM session_turns
+                WHERE session_id = %s
+                ORDER BY created_at DESC
+                LIMIT %s
+                """,
+                (session_id, WORKING_MEMORY_HISTORY_LIMIT),
+            ).fetchall()
+
+            recent_turn_rows = rows[:WORKING_MEMORY_RECENT_TURN_LIMIT]
+            older_turn_rows = list(reversed(rows[WORKING_MEMORY_RECENT_TURN_LIMIT:]))
+            working_memory_summary = self.build_working_memory_summary(
+                session_topic=session_topic,
+                older_turns=older_turn_rows,
+            )
+            connection.execute(
+                """
+                UPDATE research_sessions
+                SET working_memory_summary = %s,
+                    updated_at = %s
+                WHERE session_id = %s
+                """,
+                (
+                    working_memory_summary,
+                    datetime.now(timezone.utc).isoformat(),
+                    session_id,
+                ),
+            )
+            connection.commit()
+
+        return {
+            "working_memory_summary": working_memory_summary,
+            "recent_turns": [
+                {
+                    "run_id": row["run_id"],
+                    "user_query": row["user_query"],
+                    "assistant_response": row["assistant_response"],
+                    "response_mode": row["response_mode"],
+                    "created_at": row["created_at"],
+                }
+                for row in recent_turn_rows
+            ],
+        }
+
     # 给当前 topic 准备一包“默认可注入”的历史上下文，供后面的 planner / reviewer / direct answer 使用。
     def load_relevant_context(
         self,
@@ -952,7 +1144,8 @@ class MemoryService(BaseMemoryService):
         """Load recalled memory context for a new topic."""
 
         session_runs: list[dict[str, Any]] = []
-        session_facts: list[dict[str, Any]] = []
+        working_memory_summary = ""
+        recent_turns: list[dict[str, Any]] = []
         profile_facts: list[dict[str, Any]] = []
         global_facts: list[dict[str, Any]] = []
 
@@ -960,6 +1153,18 @@ class MemoryService(BaseMemoryService):
         with self._connect() as connection:
             run_rows: list[dict[str, Any]] = []
             if session_id:
+                working_memory_row = connection.execute(
+                    """
+                    SELECT working_memory_summary
+                    FROM research_sessions
+                    WHERE session_id = %s
+                    """,
+                    (session_id,),
+                ).fetchone()
+                working_memory_summary = str(
+                    (working_memory_row or {}).get("working_memory_summary") or ""
+                ).strip()
+
                 sql = """
                     SELECT run_id, session_id, topic, started_at, finished_at, final_report, task_count
                     FROM research_runs
@@ -986,19 +1191,29 @@ class MemoryService(BaseMemoryService):
                     }
                 )
 
-            session_candidates: list[dict[str, Any]] = []
             profile_candidates: list[dict[str, Any]] = []
             global_candidates: list[dict[str, Any]] = []
-            run_ids = [row["run_id"] for row in run_rows]
-
-            if run_ids:
-                session_candidates = self._search_semantic_facts(
-                    connection,
-                    topic,
-                    run_ids=run_ids,
-                    memory_scope=SESSION_MEMORY_SCOPE,
-                    limit=MEMORY_CANDIDATE_LIMIT,
-                )
+            if session_id:
+                turn_rows = connection.execute(
+                    """
+                    SELECT run_id, user_query, assistant_response, response_mode, created_at
+                    FROM session_turns
+                    WHERE session_id = %s
+                    ORDER BY created_at DESC
+                    LIMIT %s
+                    """,
+                    (session_id, WORKING_MEMORY_RECENT_TURN_LIMIT),
+                ).fetchall()
+                recent_turns = [
+                    {
+                        "run_id": row["run_id"],
+                        "user_query": row["user_query"],
+                        "assistant_response": row["assistant_response"],
+                        "response_mode": row["response_mode"],
+                        "created_at": row["created_at"],
+                    }
+                    for row in turn_rows
+                ]
             profile_candidates = self._search_semantic_facts(
                 connection,
                 topic,
@@ -1013,20 +1228,18 @@ class MemoryService(BaseMemoryService):
             )
             reranked = self._rerank_recalled_facts(
                 topic,
-                session_candidates=session_candidates,
                 profile_candidates=profile_candidates,
                 global_candidates=global_candidates,
             )
-            session_facts = reranked["session_facts"]
             profile_facts = reranked["profile_facts"]
             global_facts = reranked["global_facts"]
 
         return {
             "session_runs": session_runs,
-            "session_facts": session_facts,
+            "working_memory_summary": working_memory_summary,
+            "recent_turns": recent_turns,
             "profile_facts": profile_facts,
             "global_facts": global_facts,
-            "semantic_facts": session_facts,
         }
 
     def _prune_task_logs(self, connection: Any, run_id: str) -> None:
@@ -1387,25 +1600,11 @@ class MemoryService(BaseMemoryService):
     ) -> dict[str, Any] | None:
         """Find an existing fact row for minimal deduplication."""
 
-        memory_scope = str(fact.get("memory_scope") or SESSION_MEMORY_SCOPE)
+        memory_scope = str(fact.get("memory_scope") or PROFILE_MEMORY_SCOPE)
         subject = str(fact.get("subject") or "").strip()
         fact_text = str(fact.get("fact") or "").strip()
         if not fact_text:
             return None
-
-        if memory_scope == SESSION_MEMORY_SCOPE:
-            return connection.execute(
-                """
-                SELECT fact_id
-                FROM semantic_facts
-                WHERE memory_scope = %s
-                  AND source_session_id IS NOT DISTINCT FROM %s
-                  AND COALESCE(subject, '') = %s
-                  AND fact = %s
-                LIMIT 1
-                """,
-                (memory_scope, session_id, subject, fact_text),
-            ).fetchone()
 
         return connection.execute(
             """

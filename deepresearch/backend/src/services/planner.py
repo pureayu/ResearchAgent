@@ -70,7 +70,8 @@ class PlanningService:
             return "无"
 
         session_runs = recalled_context.get("session_runs") or []
-        session_facts = recalled_context.get("session_facts") or recalled_context.get("semantic_facts") or []
+        working_memory_summary = str(recalled_context.get("working_memory_summary") or "").strip()
+        recent_turns = recalled_context.get("recent_turns") or []
         profile_facts = recalled_context.get("profile_facts") or []
         global_facts = recalled_context.get("global_facts") or []
 
@@ -91,15 +92,18 @@ class PlanningService:
                     lines.append(f"   报告摘要：{excerpt}")
             sections.append("\n".join(lines))
 
-        if session_facts:
-            lines = ["当前会话已沉淀结论："]
-            for idx, fact in enumerate(session_facts[:5], start=1):
-                fact_text = str(fact.get("fact") or "").strip()
-                if not fact_text:
-                    continue
-                lines.append(f"{idx}. {fact_text}")
-            if len(lines) > 1:
-                sections.append("\n".join(lines))
+        if working_memory_summary:
+            sections.append(f"当前会话工作记忆摘要：\n{working_memory_summary}")
+
+        if recent_turns:
+            lines = ["最近几轮对话："]
+            for idx, turn in enumerate(recent_turns[:3], start=1):
+                user_query = str(turn.get("user_query") or "").strip()
+                assistant_response = str(turn.get("assistant_response") or "").strip()
+                lines.append(f"{idx}. 用户：{user_query[:120]}")
+                if assistant_response:
+                    lines.append(f"   回答：{assistant_response[:180]}")
+            sections.append("\n".join(lines))
 
         if profile_facts:
             lines = ["用户长期目标/偏好："]

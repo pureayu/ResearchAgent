@@ -41,7 +41,7 @@ class TodoItem:
 
 @dataclass(kw_only=True)
 class SummaryState:
-    recalled_context: dict | None = field(default=None)  # Default prompt-injected context; excludes task logs.
+    recalled_context: dict | None = field(default=None)  # Default prompt-injected context; includes working memory and long-term memory, excludes task logs.
     session_id : Optional[str] = field(default=None)
     #记录每轮的id号， 一次完整研究流程的编号
     run_id: Optional[str] = field(default=None)

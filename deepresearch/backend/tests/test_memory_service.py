@@ -12,7 +12,6 @@ from config import Configuration
 from models import TodoItem
 from services.memory import HIGH_SENSITIVITY
 from services.memory import PROFILE_MEMORY_SCOPE
-from services.memory import SESSION_MEMORY_SCOPE
 from services.memory import MemoryService
 
 
@@ -146,8 +145,6 @@ class ContextStubMemoryService(StubMemoryService):
         limit=5,
     ):
         del connection, topic, run_ids, limit
-        if memory_scope == SESSION_MEMORY_SCOPE:
-            return list(self._session_candidates)
         if memory_scope == PROFILE_MEMORY_SCOPE:
             return list(self._profile_candidates)
         return list(self._global_candidates)
@@ -156,14 +153,12 @@ class ContextStubMemoryService(StubMemoryService):
         self,
         topic: str,
         *,
-        session_candidates,
         profile_candidates,
         global_candidates,
         limit=5,
     ):
         del topic, limit
         return {
-            "session_facts": list(session_candidates),
             "profile_facts": list(profile_candidates),
             "global_facts": list(global_candidates),
         }
@@ -210,14 +205,14 @@ class MemoryServiceTests(unittest.TestCase):
             session_id="session-1",
         )
 
-        self.assertEqual(prepared["memory_scope"], SESSION_MEMORY_SCOPE)
+        self.assertEqual(prepared["memory_scope"], PROFILE_MEMORY_SCOPE)
 
     def test_rerank_fallback_uses_similarity_confidence_and_recency(self) -> None:
         service = StubMemoryService()
 
         result = service._rerank_recalled_facts(
             "topic",
-            session_candidates=[
+            profile_candidates=[
                 {
                     "fact_id": "older",
                     "fact": "old",
@@ -235,12 +230,11 @@ class MemoryServiceTests(unittest.TestCase):
                     "last_verified_at": datetime(2025, 1, 1, tzinfo=timezone.utc),
                 },
             ],
-            profile_candidates=[],
             global_candidates=[],
         )
 
         self.assertEqual(
-            [item["fact_id"] for item in result["session_facts"]],
+            [item["fact_id"] for item in result["profile_facts"]],
             ["best", "older"],
         )
 
@@ -248,7 +242,6 @@ class MemoryServiceTests(unittest.TestCase):
         service = StubMemoryService(
             llm_content="""
             {
-              "session_fact_ids": ["session_2"],
               "profile_fact_ids": ["profile_1"],
               "global_fact_ids": []
             }
@@ -257,10 +250,6 @@ class MemoryServiceTests(unittest.TestCase):
 
         result = service._rerank_recalled_facts(
             "topic",
-            session_candidates=[
-                {"fact_id": "session_1", "fact": "s1", "similarity": 0.8},
-                {"fact_id": "session_2", "fact": "s2", "similarity": 0.6},
-            ],
             profile_candidates=[
                 {"fact_id": "profile_1", "fact": "p1", "similarity": 0.4},
             ],
@@ -269,10 +258,6 @@ class MemoryServiceTests(unittest.TestCase):
             ],
         )
 
-        self.assertEqual(
-            [item["fact_id"] for item in result["session_facts"]],
-            ["session_2"],
-        )
         self.assertEqual(
             [item["fact_id"] for item in result["profile_facts"]],
             ["profile_1"],
@@ -309,6 +294,11 @@ class MemoryServiceTests(unittest.TestCase):
 
     def test_load_relevant_context_excludes_recent_tasks_from_default_context(self) -> None:
         connection = RecordingConnection(
+            query_one={
+                "SELECT working_memory_summary FROM research_sessions": {
+                    "working_memory_summary": "历史摘要"
+                }
+            },
             query_rows={
                 "SELECT run_id, session_id, topic, started_at, finished_at, final_report, task_count FROM research_runs": [
                     {
@@ -320,11 +310,19 @@ class MemoryServiceTests(unittest.TestCase):
                         "final_report": "报告正文",
                         "task_count": 3,
                     }
-                ]
+                ],
+                "SELECT run_id, user_query, assistant_response, response_mode, created_at FROM session_turns": [
+                    {
+                        "run_id": "run-1",
+                        "user_query": "之前问过端侧推理的方向",
+                        "assistant_response": "回答了主要技术方向。",
+                        "response_mode": "deep_research",
+                        "created_at": "2026-04-01T12:00:00+00:00",
+                    }
+                ],
             }
         )
         service = ContextStubMemoryService(
-            session_candidates=[{"fact_id": "sf-1", "fact": "会话结论"}],
             profile_candidates=[{"fact_id": "pf-1", "fact": "用户偏好中文"}],
             global_candidates=[{"fact_id": "gf-1", "fact": "全局稳定知识"}],
             connection=connection,
@@ -333,10 +331,30 @@ class MemoryServiceTests(unittest.TestCase):
         context = service.load_relevant_context("session-1", "端侧推理")
 
         self.assertIn("session_runs", context)
-        self.assertIn("session_facts", context)
+        self.assertEqual(context["working_memory_summary"], "历史摘要")
+        self.assertEqual(len(context["recent_turns"]), 1)
         self.assertNotIn("recent_tasks", context)
         executed_sql = [sql for sql, _ in connection.statements]
         self.assertFalse(any("FROM task_memories" in sql for sql in executed_sql))
+
+    def test_save_session_turn_inserts_turn_record(self) -> None:
+        connection = RecordingConnection()
+        service = StubMemoryService(connection=connection)
+
+        from models import SummaryState
+
+        state = SummaryState(
+            session_id="session-1",
+            run_id="run-1",
+            research_topic="端侧推理方向",
+            response_mode="deep_research",
+        )
+
+        service.save_session_turn(state, "这里是本轮最终回答")
+
+        executed_sql = [sql for sql, _ in connection.statements]
+        self.assertTrue(any(sql.startswith("INSERT INTO session_turns") for sql in executed_sql))
+        self.assertTrue(connection.committed)
 
     def test_load_recent_task_logs_uses_dedicated_query(self) -> None:
         connection = RecordingConnection(

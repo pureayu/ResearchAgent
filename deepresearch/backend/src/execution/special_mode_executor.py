@@ -269,7 +269,8 @@ class SpecialModeExecutor:
             return False
         return bool(
             (recalled_context.get("session_runs") or [])
-            or (recalled_context.get("session_facts") or recalled_context.get("semantic_facts") or [])
+            or str(recalled_context.get("working_memory_summary") or "").strip()
+            or (recalled_context.get("recent_turns") or [])
             or (recalled_context.get("profile_facts") or [])
             or (recalled_context.get("global_facts") or [])
         )
@@ -289,10 +290,11 @@ class SpecialModeExecutor:
         )
         session_runs = selected["session_runs"]
         task_logs = selected["task_logs"]
-        session_facts = selected["session_facts"]
+        working_memory_summary = selected["working_memory_summary"]
+        recent_turns = selected["recent_turns"]
         profile_facts = selected["profile_facts"]
 
-        if not (session_runs or task_logs or session_facts or profile_facts):
+        if not (session_runs or task_logs or working_memory_summary or recent_turns or profile_facts):
             summary = "\n".join(
                 [
                     "# 会话历史回顾",
@@ -325,16 +327,21 @@ class SpecialModeExecutor:
                 line += f"：{summary[:180]}"
             task_log_lines.append(line)
 
-        session_fact_lines = self._build_fact_lines(
-            session_facts[:MEMORY_RECALL_FACT_LIMIT],
-            prefix="- ",
-        )
+        recent_turn_lines: list[str] = []
+        for idx, turn in enumerate(recent_turns[:MEMORY_RECALL_RUN_LIMIT], start=1):
+            user_query = str(turn.get("user_query") or "").strip()
+            assistant_response = str(turn.get("assistant_response") or "").strip()
+            if not (user_query or assistant_response):
+                continue
+            recent_turn_lines.append(
+                f"- 第 {idx} 轮：用户问“{user_query[:80]}”；最终回答“{assistant_response[:120]}”"
+            )
         profile_fact_lines = self._build_fact_lines(
             profile_facts[:MEMORY_RECALL_PROFILE_LIMIT],
             prefix="- ",
         )
 
-        has_session_history = bool(run_lines or task_log_lines or session_fact_lines)
+        has_session_history = bool(run_lines or task_log_lines or working_memory_summary or recent_turn_lines)
         has_profile_memory = bool(profile_fact_lines)
         if has_session_history and has_profile_memory:
             conclusion = "是的，我找到了与你这次问题相关的历史研究记录，也命中了你之前透露过的长期偏好/目标。"
@@ -353,8 +360,10 @@ class SpecialModeExecutor:
             summary_lines.extend(["", "## 相关历史研究", *run_lines])
         if task_log_lines:
             summary_lines.extend(["", "## 相关任务记录", *task_log_lines])
-        if session_fact_lines:
-            summary_lines.extend(["", "## 已沉淀的会话结论", *session_fact_lines])
+        if working_memory_summary:
+            summary_lines.extend(["", "## 会话工作记忆摘要", working_memory_summary])
+        if recent_turn_lines:
+            summary_lines.extend(["", "## 最近几轮对话", *recent_turn_lines])
         if profile_fact_lines:
             summary_lines.extend(["", "## 我记住的长期偏好/目标", *profile_fact_lines])
         summary_lines.extend(
@@ -384,14 +393,22 @@ class SpecialModeExecutor:
                     f"信息内容: {(title + ' ' + summary[:180]).strip()}",
                 ]
             )
-        for idx, item in enumerate(session_facts[:MEMORY_RECALL_FACT_LIMIT], start=1):
-            fact = str(item.get("fact") or "").strip()
-            if not fact:
+        if working_memory_summary:
+            source_lines.extend(
+                [
+                    "Source: Working Memory Summary",
+                    f"信息内容: {working_memory_summary[:240]}",
+                ]
+            )
+        for idx, turn in enumerate(recent_turns[:MEMORY_RECALL_RUN_LIMIT], start=1):
+            user_query = str(turn.get("user_query") or "").strip()
+            assistant_response = str(turn.get("assistant_response") or "").strip()
+            if not (user_query or assistant_response):
                 continue
             source_lines.extend(
                 [
-                    f"Source: 会话语义记忆 {idx}",
-                    f"信息内容: {fact}",
+                    f"Source: Recent Turn {idx}",
+                    f"信息内容: 问题：{user_query[:100]}；回答：{assistant_response[:140]}",
                 ]
             )
         for idx, item in enumerate(profile_facts[:MEMORY_RECALL_PROFILE_LIMIT], start=1):
@@ -408,7 +425,8 @@ class SpecialModeExecutor:
         evidence_count = (
             len(session_runs[:MEMORY_RECALL_RUN_LIMIT])
             + len(task_log_lines)
-            + len(session_fact_lines)
+            + (1 if working_memory_summary else 0)
+            + len(recent_turn_lines)
             + len(profile_fact_lines)
         )
         return "\n".join(summary_lines).strip(), "\n".join(source_lines).strip(), evidence_count
@@ -422,14 +440,16 @@ class SpecialModeExecutor:
 
         session_runs = list(recalled_context.get("session_runs") or [])
         task_logs = list(recalled_context.get("task_logs") or [])
-        session_facts = list(recalled_context.get("session_facts") or recalled_context.get("semantic_facts") or [])
+        working_memory_summary = str(recalled_context.get("working_memory_summary") or "").strip()
+        recent_turns = list(recalled_context.get("recent_turns") or [])
         profile_facts = list(recalled_context.get("profile_facts") or [])
 
-        if not (session_runs or task_logs or session_facts or profile_facts):
+        if not (session_runs or task_logs or working_memory_summary or recent_turns or profile_facts):
             return {
                 "session_runs": [],
                 "task_logs": [],
-                "session_facts": [],
+                "working_memory_summary": "",
+                "recent_turns": [],
                 "profile_facts": [],
             }
 
@@ -439,7 +459,8 @@ class SpecialModeExecutor:
                 query,
                 session_runs=session_runs,
                 task_logs=task_logs,
-                session_facts=session_facts,
+                working_memory_summary=working_memory_summary,
+                recent_turns=recent_turns,
                 profile_facts=profile_facts,
             ),
         )
@@ -448,7 +469,8 @@ class SpecialModeExecutor:
             return self._memory_recall_fallback(
                 session_runs=session_runs,
                 task_logs=task_logs,
-                session_facts=session_facts,
+                working_memory_summary=working_memory_summary,
+                recent_turns=recent_turns,
                 profile_facts=profile_facts,
             )
 
@@ -464,12 +486,6 @@ class SpecialModeExecutor:
             key="task_id",
             limit=MEMORY_RECALL_TASK_LOG_LIMIT,
         )
-        selected_session_facts = self._select_items_by_ids(
-            session_facts,
-            selection["fact_ids"],
-            key="fact_id",
-            limit=MEMORY_RECALL_FACT_LIMIT,
-        )
         selected_profile_facts = self._select_items_by_ids(
             profile_facts,
             selection["fact_ids"],
@@ -479,7 +495,7 @@ class SpecialModeExecutor:
 
         related_run_ids = {
             str(item.get("run_id") or "").strip()
-            for item in selected_tasks + selected_session_facts
+            for item in selected_tasks
             if str(item.get("run_id") or "").strip()
         }
         selected_run_ids = {
@@ -496,18 +512,20 @@ class SpecialModeExecutor:
                 if len(selected_runs) >= MEMORY_RECALL_RUN_LIMIT:
                     break
 
-        if not (selected_runs or selected_tasks or selected_session_facts or selected_profile_facts):
+        if not (selected_runs or selected_tasks or working_memory_summary or recent_turns or selected_profile_facts):
             return self._memory_recall_fallback(
                 session_runs=session_runs,
                 task_logs=task_logs,
-                session_facts=session_facts,
+                working_memory_summary=working_memory_summary,
+                recent_turns=recent_turns,
                 profile_facts=profile_facts,
             )
 
         return {
             "session_runs": selected_runs[:MEMORY_RECALL_RUN_LIMIT],
             "task_logs": selected_tasks[:MEMORY_RECALL_TASK_LOG_LIMIT],
-            "session_facts": selected_session_facts[:MEMORY_RECALL_FACT_LIMIT],
+            "working_memory_summary": working_memory_summary,
+            "recent_turns": recent_turns[:MEMORY_RECALL_RUN_LIMIT],
             "profile_facts": selected_profile_facts[:MEMORY_RECALL_PROFILE_LIMIT],
         }
 
@@ -516,7 +534,8 @@ class SpecialModeExecutor:
         *,
         session_runs: list[dict[str, Any]],
         task_logs: list[dict[str, Any]],
-        session_facts: list[dict[str, Any]],
+        working_memory_summary: str,
+        recent_turns: list[dict[str, Any]],
         profile_facts: list[dict[str, Any]],
     ) -> dict[str, list[dict[str, Any]]]:
         """Fallback to simple recency when selector output is unusable."""
@@ -536,7 +555,8 @@ class SpecialModeExecutor:
         return {
             "session_runs": selected_runs,
             "task_logs": selected_tasks,
-            "session_facts": session_facts[:MEMORY_RECALL_FACT_LIMIT],
+            "working_memory_summary": working_memory_summary,
+            "recent_turns": recent_turns[:MEMORY_RECALL_RUN_LIMIT],
             "profile_facts": profile_facts[:MEMORY_RECALL_PROFILE_LIMIT],
         }
 
@@ -587,9 +607,21 @@ class SpecialModeExecutor:
             "- 暂无命中的长期目标/偏好/约束",
         )
         session_fact_block = format_lines(
-            list(recalled.get("session_facts") or recalled.get("semantic_facts") or []),
+            [
+                {"fact": str(recalled.get("working_memory_summary") or "").strip()}
+            ]
+            if str(recalled.get("working_memory_summary") or "").strip()
+            else [],
             lambda item: f"- {str(item.get('fact') or '').strip()}",
-            "- 暂无当前会话语义结论",
+            "- 暂无当前会话工作记忆摘要",
+        )
+        recent_turn_block = format_lines(
+            list(recalled.get("recent_turns") or []),
+            lambda item: (
+                f"- 用户：{str(item.get('user_query') or '').strip()[:80]}；"
+                f"回答：{str(item.get('assistant_response') or '').strip()[:120]}"
+            ),
+            "- 暂无最近对话",
         )
         global_fact_block = format_lines(
             list(recalled.get("global_facts") or []),
@@ -612,7 +644,8 @@ class SpecialModeExecutor:
             f"是否命中历史上下文：{'是' if has_context else '否'}\n\n"
             "请直接回答用户，不要把自己写成研究报告。\n\n"
             f"长期目标/偏好/约束：\n{profile_block}\n\n"
-            f"当前会话语义记忆：\n{session_fact_block}\n\n"
+            f"当前会话工作记忆摘要：\n{session_fact_block}\n\n"
+            f"最近几轮对话：\n{recent_turn_block}\n\n"
             f"跨会话稳定知识：\n{global_fact_block}\n\n"
             f"最近相关研究：\n{session_run_block}\n"
         )
@@ -637,17 +670,25 @@ class SpecialModeExecutor:
             )
             evidence_count += 1
 
-        for idx, item in enumerate(
-            recalled.get("session_facts") or recalled.get("semantic_facts") or [],
-            start=1,
-        ):
-            fact = str(item.get("fact") or "").strip()
-            if not fact:
+        working_memory_summary = str(recalled.get("working_memory_summary") or "").strip()
+        if working_memory_summary:
+            source_lines.extend(
+                [
+                    "Source: Working Memory Summary",
+                    f"信息内容: {working_memory_summary[:240]}",
+                ]
+            )
+            evidence_count += 1
+
+        for idx, item in enumerate(recalled.get("recent_turns") or [], start=1):
+            user_query = str(item.get("user_query") or "").strip()
+            assistant_response = str(item.get("assistant_response") or "").strip()
+            if not (user_query or assistant_response):
                 continue
             source_lines.extend(
                 [
-                    f"Source: Session Semantic {idx}",
-                    f"信息内容: {fact}",
+                    f"Source: Recent Turn {idx}",
+                    f"信息内容: 问题：{user_query[:100]}；回答：{assistant_response[:140]}",
                 ]
             )
             evidence_count += 1
@@ -697,12 +738,17 @@ class SpecialModeExecutor:
                 }
                 for item in (recalled.get("session_runs") or [])[:3]
             ],
-            "session_facts": [
+            "working_memory_summary": self._trim_text(
+                recalled.get("working_memory_summary"),
+                240,
+            ),
+            "recent_turns": [
                 {
-                    "fact_id": str(item.get("fact_id") or "").strip(),
-                    "fact": self._trim_text(item.get("fact"), 160),
+                    "run_id": str(item.get("run_id") or "").strip(),
+                    "user_query": self._trim_text(item.get("user_query"), 120),
+                    "assistant_response": self._trim_text(item.get("assistant_response"), 180),
                 }
-                for item in (recalled.get("session_facts") or recalled.get("semantic_facts") or [])[:5]
+                for item in (recalled.get("recent_turns") or [])[:3]
             ],
             "profile_facts": [
                 {
@@ -727,7 +773,8 @@ class SpecialModeExecutor:
         *,
         session_runs: list[dict[str, Any]],
         task_logs: list[dict[str, Any]],
-        session_facts: list[dict[str, Any]],
+        working_memory_summary: str,
+        recent_turns: list[dict[str, Any]],
         profile_facts: list[dict[str, Any]],
     ) -> str:
         """Serialize session/profile recall candidates for selector inference."""
@@ -752,14 +799,14 @@ class SpecialModeExecutor:
                 }
                 for item in task_logs[:MEMORY_RECALL_TASK_LOG_LIMIT]
             ],
-            "session_facts": [
+            "working_memory_summary": self._trim_text(working_memory_summary, 240),
+            "recent_turns": [
                 {
-                    "fact_id": str(item.get("fact_id") or "").strip(),
                     "run_id": str(item.get("run_id") or "").strip(),
-                    "subject": self._trim_text(item.get("subject"), 60),
-                    "fact": self._trim_text(item.get("fact"), 180),
+                    "user_query": self._trim_text(item.get("user_query"), 120),
+                    "assistant_response": self._trim_text(item.get("assistant_response"), 180),
                 }
-                for item in session_facts[:MEMORY_RECALL_FACT_LIMIT]
+                for item in recent_turns[:MEMORY_RECALL_RUN_LIMIT]
             ],
             "profile_facts": [
                 {
@@ -942,7 +989,8 @@ class SpecialModeExecutor:
             return False
         return bool(
             (recalled_context.get("profile_facts") or [])
-            or (recalled_context.get("session_facts") or recalled_context.get("semantic_facts") or [])
+            or str(recalled_context.get("working_memory_summary") or "").strip()
+            or (recalled_context.get("recent_turns") or [])
             or (recalled_context.get("global_facts") or [])
             or (recalled_context.get("session_runs") or [])
         )

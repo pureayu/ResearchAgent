@@ -151,17 +151,13 @@ class SpecialModeExecutorTests(unittest.TestCase):
                         "summary": "不应被选中。",
                     },
                 ],
-                "session_facts": [
+                "working_memory_summary": "当前会话已总结：检索质量和延迟之间存在明显 tradeoff。",
+                "recent_turns": [
                     {
-                        "fact_id": "session-1",
                         "run_id": "run-1",
-                        "fact": "检索质量和延迟之间存在明显 tradeoff。",
-                    },
-                    {
-                        "fact_id": "session-2",
-                        "run_id": "run-2",
-                        "fact": "不应被选中。",
-                    },
+                        "user_query": "之前关于延迟的主要结论是什么？",
+                        "assistant_response": "延迟和检索质量之间存在明显 tradeoff。",
+                    }
                 ],
                 "profile_facts": [
                     {
@@ -181,6 +177,7 @@ class SpecialModeExecutorTests(unittest.TestCase):
         self.assertIn("用户长期关注端侧部署和延迟。", summary)
         self.assertIn("分析端到端延迟", summary)
         self.assertNotIn("无关主题", summary)
+        self.assertIn("会话工作记忆摘要", summary)
         self.assertIn("Source: 用户画像记忆 1", sources_summary)
         self.assertGreaterEqual(evidence_count, 4)
 
@@ -210,7 +207,7 @@ class SpecialModeExecutorTests(unittest.TestCase):
                         "summary": "不应被带上。",
                     },
                 ],
-                "session_facts": [{"fact_id": "sf-1", "run_id": "run-1", "fact": "最近结论"}],
+                "working_memory_summary": "最近一次研究的关键结论已经沉淀在工作记忆里。",
                 "profile_facts": [{"fact_id": "pf-1", "fact": "用户偏好中文回答"}],
             }
         )
@@ -221,6 +218,7 @@ class SpecialModeExecutorTests(unittest.TestCase):
         self.assertIn("最近任务", summary)
         self.assertNotIn("更老的任务", summary)
         self.assertIn("用户偏好中文回答", summary)
+        self.assertIn("工作记忆", summary)
 
     def test_memory_recall_loads_task_logs_via_dedicated_loader(self) -> None:
         def load_task_logs(session_id, *, exclude_run_id=None, limit=5):
@@ -238,7 +236,7 @@ class SpecialModeExecutorTests(unittest.TestCase):
 
         executor = self._make_executor(
             selector_responses=(
-                '{"run_ids":["run-1"],"task_ids":["101"],"fact_ids":["session-1"]}',
+                '{"run_ids":["run-1"],"task_ids":["101"],"fact_ids":[]}',
             ),
             task_log_loader=load_task_logs,
         )
@@ -254,13 +252,7 @@ class SpecialModeExecutorTests(unittest.TestCase):
                         "report_excerpt": "延迟与召回质量之间存在明显 tradeoff。",
                     }
                 ],
-                "session_facts": [
-                    {
-                        "fact_id": "session-1",
-                        "run_id": "run-1",
-                        "fact": "检索质量和延迟之间存在明显 tradeoff。",
-                    }
-                ],
+                "working_memory_summary": "检索质量和延迟之间存在明显 tradeoff。",
             },
         )
 
@@ -291,6 +283,7 @@ class SpecialModeExecutorTests(unittest.TestCase):
         state = SummaryState(
             recalled_context={
                 "profile_facts": [{"fact": "用户偏好简洁回答"}],
+                "working_memory_summary": "当前会话已压缩出若干关键结论。",
                 "global_facts": [{"fact": "压缩模型通常会影响召回质量"}],
                 "task_logs": [
                     {"title": "不应进入短答", "summary": "task log 不应污染 direct answer"}
@@ -303,10 +296,11 @@ class SpecialModeExecutorTests(unittest.TestCase):
 
         self.assertIn("跨会话稳定知识", prompt)
         self.assertIn("压缩模型通常会影响召回质量", prompt)
+        self.assertIn("当前会话工作记忆摘要", prompt)
         self.assertNotIn("最近相关任务", prompt)
         self.assertIn("Source: Global Memory 1", sources_summary)
         self.assertNotIn("Recent Task", sources_summary)
-        self.assertEqual(evidence_count, 2)
+        self.assertEqual(evidence_count, 3)
 
 
 if __name__ == "__main__":

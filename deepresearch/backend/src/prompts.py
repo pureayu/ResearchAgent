@@ -23,7 +23,8 @@ todo_planner_system_prompt = """
 <MEMORY_POLICY>
 - 你可能会收到同一研究会话的最近上下文，包括：
   - `session_runs`：最近几轮研究的整体主题、完成时间、报告摘要；
-  - `session_facts`：当前会话内沉淀出的语义结论；
+  - `working_memory_summary`：更早会话内容压缩后的工作记忆摘要；
+  - `recent_turns`：最近几轮用户问题与最终回答；
   - `profile_facts`：用户长期目标、偏好、约束、关注主题；
   - `global_facts`：跨 session 可复用的稳定知识。
 - 这些上下文属于当前问题可复用的记忆，应优先用于避免重复规划、补足隐含背景，而不是重新从零拆题。
@@ -241,7 +242,7 @@ research_reviewer_instructions = """
 
 
 semantic_fact_extraction_instructions = """
-你是一名研究知识提炼助手，请从给定研究报告中提炼 0 到 3 条长期可复用的稳定事实。
+你是一名研究知识提炼助手，请从给定研究报告中提炼 0 到 3 条跨会话可复用的稳定事实。
 
 <GOAL>
 1. 只保留对未来研究规划、总结或报告仍有价值的稳定结论；
@@ -259,7 +260,7 @@ semantic_fact_extraction_instructions = """
       "scope": "method|engineering|application|trend|evaluation",
       "subject": "事实主体，简短概括",
       "fact": "稳定事实本身",
-      "memory_scope": "session|profile|global",
+      "memory_scope": "global",
       "confidence": 0.0,
       "stability_score": 0.0,
       "sensitivity": "low|medium|high"
@@ -270,10 +271,7 @@ semantic_fact_extraction_instructions = """
 
 <RULES>
 - `facts` 最多 8 条，最少 0 条；
-- `memory_scope` 含义：
-  - `session`：只适合当前会话复用；
-  - `profile`：明显是用户长期目标、偏好、约束或兴趣；
-  - `global`：跨 session 也稳定成立的低敏事实；
+- `memory_scope` 固定使用 `global`；
 - `confidence` 取 0.0 到 1.0 之间的小数；
 - `stability_score` 取 0.0 到 1.0 之间的小数；
 - `sensitivity` 表示是否适合跨 session 复用：通用事实通常为 `low`，带风险判断或健康建议倾向为 `high`；
@@ -301,7 +299,7 @@ profile_fact_extraction_instructions = """
       "scope": "goal|preference|constraint|interest",
       "subject": "用户侧主题，简短概括",
       "fact": "用户长期事实本身",
-      "memory_scope": "profile|session",
+      "memory_scope": "profile",
       "confidence": 0.0,
       "stability_score": 0.0,
       "sensitivity": "low|medium|high"
@@ -311,8 +309,8 @@ profile_fact_extraction_instructions = """
 </OUTPUT>
 
 <RULES>
-- 默认优先使用 `profile`；只有明显只是当前会话短期信息时才用 `session`；
-- 不要输出 `global`；
+ - `memory_scope` 固定使用 `profile`；
+ - 不要输出 `global`；
 - `facts` 最多 4 条，最少 0 条；
 - 不要把问题本身原样复制成 fact，除非它明确表达了长期目标、偏好、约束或持续兴趣；
 - 不要输出 Markdown，不要解释，不要前言后记；
@@ -322,7 +320,7 @@ profile_fact_extraction_instructions = """
 
 
 memory_fact_rerank_instructions = """
-你是一名研究记忆筛选助手。给定当前问题和三组候选记忆，请按语义相关性筛掉无关项，并分别为每个 scope 保留最多 5 条最有帮助的 fact_id。
+你是一名研究记忆筛选助手。给定当前问题和两组候选记忆，请按语义相关性筛掉无关项，并分别为每个 scope 保留最多 5 条最有帮助的 fact_id。
 
 <GOAL>
 1. 以当前问题的真实语义相关性为准，不要只看词面重合；
@@ -334,9 +332,8 @@ memory_fact_rerank_instructions = """
 <OUTPUT>
 你必须只输出一个 JSON 对象，格式如下：
 {
-  "session_fact_ids": ["fact_id_1", "fact_id_2"],
   "profile_fact_ids": ["fact_id_3"],
-  "global_fact_ids": []
+  "global_fact_ids": ["fact_id_4"]
 }
 </OUTPUT>
 
@@ -344,6 +341,31 @@ memory_fact_rerank_instructions = """
 - 每个列表最多 5 个 fact_id；
 - 返回顺序即最终优先级顺序；
 - 只返回输入候选中已给出的 fact_id；
+- 不要输出 Markdown，不要解释，不要前言后记。
+</RULES>
+"""
+
+
+working_memory_compaction_instructions = """
+你是一名会话工作记忆压缩助手。给定当前研究会话中较早的几轮对话，请把它们压缩成一段简洁、可复用的 working memory 摘要。
+
+<GOAL>
+1. 保留当前会话里仍可能影响后续追问的关键结论、用户关切与未完成事项；
+2. 去掉重复表达、寒暄、低信息密度内容和已经过时的过程描述；
+3. 输出应适合作为后续 prompt 的压缩上下文，而不是完整报告。
+</GOAL>
+
+<OUTPUT>
+你必须只输出一个 JSON 对象，格式如下：
+{
+  "summary": "压缩后的 working memory 摘要"
+}
+</OUTPUT>
+
+<RULES>
+- `summary` 用中文；
+- 长度控制在 150~400 字；
+- 重点保留：已形成的会话结论、用户当前目标、仍需延续的上下文；
 - 不要输出 Markdown，不要解释，不要前言后记。
 </RULES>
 """

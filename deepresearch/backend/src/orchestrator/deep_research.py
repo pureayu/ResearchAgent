@@ -148,6 +148,11 @@ class DeepResearchAgent:
         state.structured_report = report
         state.running_summary = report
         self._persist_final_report(state, report)
+        self.memory_service.save_session_turn(state, report)
+        state.recalled_context = {
+            **(state.recalled_context or {}),
+            **self.memory_service.refresh_working_memory(state.session_id),
+        }
         self._capture_profile_memory(state)
         self.memory_service.save_report_memory(state.run_id, state, report)
         if state.response_mode == RESPONSE_MODE_DEEP_RESEARCH:
@@ -366,6 +371,11 @@ class DeepResearchAgent:
         state.running_summary = report
 
         note_event = self._persist_final_report(state, report)
+        self.memory_service.save_session_turn(state, report)
+        state.recalled_context = {
+            **(state.recalled_context or {}),
+            **self.memory_service.refresh_working_memory(state.session_id),
+        }
         self._capture_profile_memory(state)
         self.memory_service.save_report_memory(state.run_id, state, report)
         if state.response_mode == RESPONSE_MODE_DEEP_RESEARCH:
