@@ -118,6 +118,7 @@ class SummarizationService:
             f"任务名称：{task.title}\n"
             f"任务目标：{task.intent}\n"
             f"检索查询：{task.query}\n"
+            f"多重检索：{'; '.join(task.queries or [task.query])}\n"
             f"任务上下文：\n{context}\n"
             f"{build_note_guidance(task)}\n"
             "请按照以上协作要求先同步笔记，然后返回一份面向用户的 Markdown 摘要：先给结论，再列关键要点，不要输出固定标题“任务总结”。"

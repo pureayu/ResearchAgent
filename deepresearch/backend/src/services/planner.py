@@ -4,64 +4,227 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any, List, Optional
+from pathlib import Path
+from typing import Any, List
 
 from agent_runtime.interfaces import AgentLike
-from agent_runtime.tool_protocol import extract_tool_calls, parse_tool_payload_body
-from models import SummaryState, TodoItem
+from agent_runtime.tool_protocol import extract_note_id_from_text
 from config import Configuration
-from prompts import get_current_date, todo_planner_instructions
-from utils import strip_thinking_tokens
+from llm.schemas import PlannerTasksOutput
+from llm.structured import StructuredOutputRunner
+from models import SummaryState, TodoItem
+from prompts import (
+    get_current_date,
+    todo_planner_structured_instructions,
+)
+from services.tool_events import ToolCallTracker
 
 logger = logging.getLogger(__name__)
 
 class PlanningService:
     """Wraps the planner agent to produce structured TODO items."""
 
-    def __init__(self, planner_agent: AgentLike, config: Configuration) -> None:
-        self._agent = planner_agent
+    def __init__(
+        self,
+        planner_agent: AgentLike | None,
+        config: Configuration,
+        *,
+        structured_planner: StructuredOutputRunner[PlannerTasksOutput] | None = None,
+        note_tool: Any | None = None,
+        tool_tracker: ToolCallTracker | None = None,
+    ) -> None:
+        del planner_agent
         self._config = config
+        self._structured_planner = structured_planner
+        self._note_tool = note_tool
+        self._tool_tracker = tool_tracker
 
     def plan_todo_list(self, state: SummaryState) -> List[TodoItem]:
         """Ask the planner agent to break the topic into actionable tasks."""
 
         recalled_context_text = self._format_recalled_context(state.recalled_context)
-        prompt = todo_planner_instructions.format(
+        structured_prompt = todo_planner_structured_instructions.format(
             current_date=get_current_date(),
             research_topic=state.research_topic,
             recalled_context=recalled_context_text,
         )
 
-        response = self._agent.run(prompt)
-        self._agent.clear_history()
-
-        logger.info("Planner raw output (truncated): %s", response[:500])
-
-        tasks_payload = self._extract_tasks(response)
+        tasks_payload = self._invoke_planner(structured_prompt=structured_prompt)
         todo_items: List[TodoItem] = []
 
         max_items = max(1, int(self._config.max_todo_items))
         for idx, item in enumerate(tasks_payload[:max_items], start=1):
             title = str(item.get("title") or f"任务{idx}").strip()
             intent = str(item.get("intent") or "聚焦主题的关键问题").strip()
-            query = str(item.get("query") or state.research_topic).strip()
+            queries = self._normalize_queries(item, fallback=state.research_topic or "")
+            query = queries[0] if queries else str(state.research_topic or "").strip()
 
             if not query:
                 query = state.research_topic
+            if not queries and query:
+                queries = [query]
 
             task = TodoItem(
                 id=idx,
                 title=title,
                 intent=intent,
                 query=query,
+                queries=queries,
             )
             todo_items.append(task)
 
+        self._sync_task_notes(todo_items)
         state.todo_items = todo_items
 
         titles = [task.title for task in todo_items]
         logger.info("Planner produced %d tasks: %s", len(todo_items), titles)
         return todo_items
+
+    def _invoke_planner(
+        self,
+        *,
+        structured_prompt: str,
+    ) -> List[dict[str, Any]]:
+        """Use structured output and retry once with validation feedback."""
+
+        if self._structured_planner is None:
+            logger.warning("Structured planner unavailable; returning no tasks")
+            return []
+
+        prompt = structured_prompt
+        last_error: Exception | None = None
+        for attempt in range(0, 3):
+            try:
+                payload = self._structured_planner.invoke(prompt)
+                tasks = [item.model_dump() for item in payload.tasks]
+                logger.info(
+                    "Planner structured output produced %d tasks via %s on attempt %d",
+                    len(tasks),
+                    self._structured_planner.agent_name,
+                    attempt,
+                )
+                return tasks
+            except Exception as exc:
+                last_error = exc
+                logger.warning(
+                    "Structured planner attempt %d failed; retrying with validation feedback",
+                    attempt,
+                    exc_info=True,
+                )
+                prompt = self._build_repair_prompt(structured_prompt, exc)
+
+        logger.error("Structured planner failed after repair retry: %s", last_error)
+        return []
+
+    @staticmethod
+    def _build_repair_prompt(original_prompt: str, error: Exception) -> str:
+        """Ask the model to repair its previous schema violation."""
+
+        error_text = str(error)
+        if len(error_text) > 3000:
+            error_text = f"{error_text[:3000]}\n...[truncated]"
+        return (
+            f"{original_prompt}\n\n"
+            "<PREVIOUS_ATTEMPT_FAILED>\n"
+            "你的上一次输出没有通过 Pydantic schema 校验。错误信息如下，"
+            "其中可能包含你上一次返回的非法 JSON。请不要解释错误，只重新输出一个符合 schema 的 JSON 对象。\n"
+            f"{error_text}\n"
+            "</PREVIOUS_ATTEMPT_FAILED>\n\n"
+            "<REPAIR_RULES>\n"
+            "1. 顶层必须是 JSON object，不是数组。\n"
+            "2. 顶层必须只有 `tasks` 字段。\n"
+            "3. `tasks` 中每个元素只能包含 `title`、`intent`、`query`、`queries`。\n"
+            "4. `queries` 必须是字符串数组，包含 2~4 条互补英文检索式；`query` 必须等于 `queries[0]`。\n"
+            "5. 禁止输出 note/action/task_id/tags/content 字段。\n"
+            "6. 禁止输出 Markdown 或解释文字。\n"
+            "</REPAIR_RULES>"
+        )
+
+    @staticmethod
+    def _normalize_queries(item: dict[str, Any], *, fallback: str) -> list[str]:
+        """Return deduplicated planner queries while preserving legacy `query`."""
+
+        values: list[str] = []
+        raw_queries = item.get("queries")
+        if isinstance(raw_queries, list):
+            values.extend(str(query or "") for query in raw_queries)
+        legacy_query = str(item.get("query") or "").strip()
+        if legacy_query:
+            values.append(legacy_query)
+        if not values and fallback:
+            values.append(fallback)
+
+        normalized: list[str] = []
+        for value in values:
+            for part in str(value or "").split(";"):
+                query = " ".join(part.split()).strip()
+                if query and query not in normalized:
+                    normalized.append(query)
+        return normalized[:4]
+
+    def _sync_task_notes(self, todo_items: List[TodoItem]) -> None:
+        """Create deterministic task notes when planner output is schema-driven."""
+
+        if not self._note_tool:
+            return
+
+        for task in todo_items:
+            if task.note_id:
+                continue
+
+            title = f"任务 {task.id}: {task.title}".strip()
+            payload = {
+                "action": "create",
+                "task_id": task.id,
+                "title": title,
+                "note_type": "task_state",
+                "tags": ["deep_research", f"task_{task.id}"],
+                "content": self._build_initial_note_content(task),
+            }
+            raw_parameters = json.dumps(payload, ensure_ascii=False)
+
+            try:
+                response = str(self._note_tool.run(payload) or "")
+            except Exception:
+                logger.exception("Failed to create planner note for task %s", task.id)
+                continue
+
+            note_id = extract_note_id_from_text(response)
+            if note_id:
+                task.note_id = note_id
+                if self._config.notes_workspace:
+                    task.note_path = str(Path(self._config.notes_workspace) / f"{note_id}.md")
+
+            if self._tool_tracker is not None:
+                self._tool_tracker.record(
+                    {
+                        "agent_name": (
+                            self._structured_planner.agent_name
+                            if self._structured_planner is not None
+                            else "研究规划专家"
+                        ),
+                        "tool_name": "note",
+                        "raw_parameters": raw_parameters,
+                        "parsed_parameters": payload,
+                        "result": response,
+                    }
+                )
+
+    @staticmethod
+    def _build_initial_note_content(task: TodoItem) -> str:
+        """Seed a new task note with planner-time metadata."""
+
+        return (
+            f"# 任务 {task.id}: {task.title}\n\n"
+            "## 任务概览\n"
+            f"- 任务目标：{task.intent}\n"
+            f"- 检索查询：{task.query}\n\n"
+            f"- 多重检索：{'; '.join(task.queries or [task.query])}\n\n"
+            "## 来源概览\n"
+            "待补充\n\n"
+            "## 任务总结\n"
+            "待补充"
+        )
 
     def _format_recalled_context(self, recalled_context: dict[str, Any] | None) -> str:
         """Convert structured recalled memory into stable planner-facing text."""
@@ -120,181 +283,5 @@ class PlanningService:
             title="基础背景梳理",
             intent="收集主题的核心背景与最新动态",
             query=f"{state.research_topic} 最新进展" if state.research_topic else "基础背景梳理",
+            queries=[f"{state.research_topic} 最新进展"] if state.research_topic else ["基础背景梳理"],
         )
-
-    # ------------------------------------------------------------------
-    # Parsing helpers
-    # ------------------------------------------------------------------
-    def _extract_tasks(self, raw_response: str) -> List[dict[str, Any]]:
-        """Parse planner output into a list of task dictionaries."""
-
-        text = raw_response.strip()
-        if self._config.strip_thinking_tokens:
-            text = strip_thinking_tokens(text)
-
-        json_payload = self._extract_json_payload(text)
-        tasks: List[dict[str, Any]] = []
-
-        if isinstance(json_payload, dict):
-            candidate = json_payload.get("tasks")
-            if isinstance(candidate, list):
-                for item in candidate:
-                    if isinstance(item, dict):
-                        tasks.append(item)
-        elif isinstance(json_payload, list):
-            for item in json_payload:
-                if isinstance(item, dict):
-                    tasks.append(item)
-
-        if not tasks:
-            tool_payload = self._extract_tool_payload(text)
-            if tool_payload and isinstance(tool_payload.get("tasks"), list):
-                for item in tool_payload["tasks"]:
-                    if isinstance(item, dict):
-                        tasks.append(item)
-
-        if not tasks:
-            tasks.extend(self._extract_tasks_from_note_tool_calls(text))
-
-        if not tasks:
-            tasks.extend(self._extract_tasks_from_markdown(text))
-
-        return tasks
-
-    def _extract_json_payload(self, text: str) -> Optional[dict[str, Any] | list]:
-        """Try to locate and parse a JSON object or array from the text."""
-
-        start = text.find("{")
-        end = text.rfind("}")
-        if start != -1 and end != -1 and end > start:
-            candidate = text[start : end + 1]
-            try:
-                return json.loads(candidate)
-            except json.JSONDecodeError:
-                pass
-
-        start = text.find("[")
-        end = text.rfind("]")
-        if start != -1 and end != -1 and end > start:
-            candidate = text[start : end + 1]
-            try:
-                return json.loads(candidate)
-            except json.JSONDecodeError:
-                return None
-
-        return None
-
-    def _extract_tool_payload(self, text: str) -> Optional[dict[str, Any]]:
-        """Parse the first TOOL_CALL expression in the output."""
-        tool_calls = self._extract_tool_calls(text)
-        if not tool_calls:
-            return None
-
-        _, body = tool_calls[0]
-        return self._parse_tool_payload_body(body)
-
-    def _extract_tool_calls(self, text: str) -> list[tuple[str, str]]:
-        """Extract TOOL_CALL entries while tolerating JSON arrays in the payload."""
-
-        return extract_tool_calls(text)
-
-    def _extract_tasks_from_note_tool_calls(self, text: str) -> List[dict[str, Any]]:
-        """Recover task definitions from note create calls when final JSON is missing."""
-
-        tasks: list[dict[str, Any]] = []
-
-        for tool_name, body in self._extract_tool_calls(text):
-            if tool_name.strip().lower() != "note":
-                continue
-
-            payload = self._parse_tool_payload_body(body)
-
-            if not isinstance(payload, dict):
-                continue
-
-            if str(payload.get("action") or "").lower() != "create":
-                continue
-
-            title = str(payload.get("title") or "").strip()
-            content = str(payload.get("content") or "").strip()
-
-            if not title:
-                continue
-
-            intent = self._extract_field(
-                content,
-                prefixes=["任务目标：", "任务目标:", "目标：", "目标:"],
-            )
-            query = self._extract_field(
-                content,
-                prefixes=["检索方向：", "检索方向:", "检索关键词：", "检索关键词:"],
-            )
-
-            tasks.append(
-                {
-                    "title": title,
-                    "intent": intent or "聚焦主题的关键问题",
-                    "query": query or title,
-                }
-            )
-
-        return tasks
-
-    def _parse_tool_payload_body(self, body: str) -> Optional[dict[str, Any]]:
-        """Parse a TOOL_CALL body, tolerating quasi-JSON produced by the LLM."""
-
-        return parse_tool_payload_body(body)
-
-    def _extract_tasks_from_markdown(self, text: str) -> List[dict[str, Any]]:
-        """Fallback parser for markdown tables or numbered task lists."""
-
-        tasks: list[dict[str, Any]] = []
-
-        table_row_pattern = re.compile(
-            r"^\|\s*(\d+)\s*\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|",
-            re.MULTILINE,
-        )
-        for _, title, intent in table_row_pattern.findall(text):
-            clean_title = title.strip()
-            if clean_title.startswith("任务名称") or clean_title.startswith("任务ID"):
-                continue
-            tasks.append(
-                {
-                    "title": clean_title,
-                    "intent": intent.strip(),
-                    "query": clean_title,
-                }
-            )
-
-        if tasks:
-            return tasks
-
-        line_pattern = re.compile(
-            r"^(?:[-*]|\d+[.)]|任务\s*\d+[:：-])\s*(.+)$",
-            re.MULTILINE,
-        )
-        for match in line_pattern.findall(text):
-            line = match.strip()
-            if len(line) < 4:
-                continue
-            title = re.split(r"[：:。；;]", line, maxsplit=1)[0].strip()
-            tasks.append(
-                {
-                    "title": title,
-                    "intent": line,
-                    "query": title,
-                }
-            )
-
-        return tasks
-
-    @staticmethod
-    def _extract_field(content: str, prefixes: list[str]) -> str:
-        """Extract a single-line field value by prefix from note content."""
-
-        for line in content.splitlines():
-            stripped = line.strip()
-            for prefix in prefixes:
-                if stripped.startswith(prefix):
-                    return stripped[len(prefix) :].strip()
-        return ""

@@ -56,6 +56,31 @@ class SourceRoutingServiceTests(unittest.TestCase):
         self.assertEqual(plan.intent_label, "literature_review")
         self.assertGreater(plan.confidence, 0.9)
 
+    def test_literature_review_keeps_academic_then_web_order(self) -> None:
+        service = SourceRoutingService(
+            StubAgent(
+                """
+                {
+                  "intent_label": "literature_review",
+                  "preferred_capabilities": ["search_academic_papers"],
+                  "confidence": 0.91,
+                  "reason": "论文调研"
+                }
+                """
+            ),
+            Configuration(strip_thinking_tokens=False),
+        )
+
+        plan = service.plan_capabilities(
+            "RAG 研究",
+            TodoItem(id=1, title="论文调研", intent="找代表工作", query="RAG survey"),
+        )
+
+        self.assertEqual(
+            plan.preferred_capabilities,
+            ["search_academic_papers", "search_web_pages"],
+        )
+
     def test_plan_capabilities_falls_back_on_invalid_json(self) -> None:
         service = SourceRoutingService(
             StubAgent("not json"),

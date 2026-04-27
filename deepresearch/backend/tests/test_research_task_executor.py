@@ -93,6 +93,105 @@ class ResearchTaskExecutorTests(unittest.TestCase):
         self.assertEqual(result.task_patch.current_capability, SEARCH_ACADEMIC_PAPERS_CAPABILITY)
         self.assertIsNone(result.task_patch.evidence_gap_reason)
 
+    def test_multi_query_academic_merges_evidence(self) -> None:
+        executor = self._make_executor([SEARCH_ACADEMIC_PAPERS_CAPABILITY])
+        state = SummaryState(research_topic="topic")
+        task = TodoItem(
+            id=1,
+            title="任务",
+            intent="目标",
+            query="query one",
+            queries=["query one", "query two"],
+        )
+        responses = [
+            (
+                {
+                    "results": [
+                        {"title": "a", "url": "u1", "content": "c", "raw_content": "c", "score": 1.0, "source_type": "academic", "pdf_url": "p1"},
+                        {"title": "b", "url": "u2", "content": "c", "raw_content": "c", "score": 0.9, "source_type": "academic", "pdf_url": "p2"},
+                    ],
+                    "backend": "arxiv",
+                    "answer": None,
+                    "notices": [],
+                },
+                [],
+                None,
+                "arxiv",
+            ),
+            (
+                {
+                    "results": [
+                        {"title": "c", "url": "u3", "content": "c", "raw_content": "c", "score": 0.8, "source_type": "academic", "pdf_url": "p3"},
+                    ],
+                    "backend": "arxiv",
+                    "answer": None,
+                    "notices": [],
+                },
+                [],
+                None,
+                "arxiv",
+            ),
+        ]
+
+        with patch(
+            "execution.research_task_executor.dispatch_capability_search",
+            side_effect=responses,
+        ) as dispatch:
+            result = consume(executor.execute(state, task, emit_stream=False))
+
+        self.assertEqual(result.task_patch.attempt_count, 2)
+        self.assertEqual(result.task_patch.evidence_count, 3)
+        self.assertEqual(result.task_patch.latest_query, "query one; query two")
+        self.assertIsNone(result.task_patch.evidence_gap_reason)
+        self.assertEqual(dispatch.call_args_list[0].args[1], "query one")
+        self.assertEqual(dispatch.call_args_list[1].args[1], "query two")
+
+    def test_research_chain_runs_web_after_sufficient_academic(self) -> None:
+        executor = self._make_executor(
+            [SEARCH_ACADEMIC_PAPERS_CAPABILITY, SEARCH_WEB_PAGES_CAPABILITY]
+        )
+        state = SummaryState(research_topic="topic")
+        task = TodoItem(id=1, title="任务", intent="目标", query="query")
+        responses = [
+            (
+                {
+                    "results": [
+                        {"title": "a", "url": "u1", "content": "c", "raw_content": "c", "score": 1.0, "source_type": "academic", "pdf_url": "p1"},
+                        {"title": "b", "url": "u2", "content": "c", "raw_content": "c", "score": 0.9, "source_type": "academic", "pdf_url": "p2"},
+                        {"title": "c", "url": "u3", "content": "c", "raw_content": "c", "score": 0.8, "source_type": "academic", "pdf_url": "p3"},
+                    ],
+                    "backend": "arxiv",
+                    "answer": None,
+                    "notices": [],
+                },
+                [],
+                None,
+                "arxiv",
+            ),
+            (
+                {
+                    "results": [],
+                    "backend": "advanced",
+                    "answer": None,
+                    "notices": ["web unavailable"],
+                },
+                ["web unavailable"],
+                None,
+                "advanced",
+            ),
+        ]
+
+        with patch(
+            "execution.research_task_executor.dispatch_capability_search",
+            side_effect=responses,
+        ) as dispatch:
+            result = consume(executor.execute(state, task, emit_stream=False))
+
+        self.assertEqual(result.task_patch.attempt_count, 2)
+        self.assertEqual(dispatch.call_count, 2)
+        self.assertEqual(result.task_patch.search_backend, "arxiv")
+        self.assertIsNone(result.task_patch.evidence_gap_reason)
+
     def test_academic_then_web_stop(self) -> None:
         executor = self._make_executor(
             [SEARCH_ACADEMIC_PAPERS_CAPABILITY, SEARCH_WEB_PAGES_CAPABILITY]

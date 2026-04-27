@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from collections.abc import Generator, Iterator
 from pathlib import Path
 from threading import Lock
@@ -18,6 +19,7 @@ from agent_runtime.roles import (
     RESPONSE_MODE_CLASSIFIER_ROLE,
     REVIEWER_ROLE,
     SOURCE_ROUTE_PLANNER_ROLE,
+    get_agent_spec,
 )
 from agent_runtime.tool_protocol import extract_note_id_from_text
 from config import Configuration
@@ -31,8 +33,18 @@ from execution import (
     TaskExecutionResult,
     TaskPatch,
 )
+from graph import build_deep_research_graph
+from graph.state import DeepResearchWorkflowState
+from llm import StructuredOutputRunner, build_chat_model
+from llm.schemas import (
+    MemoryRecallSelectionOutput,
+    PlannerTasksOutput,
+    ResponseModeSelectionOutput,
+    ReviewerOutput,
+    SourceRouteOutput,
+)
 from models import SummaryState, SummaryStateOutput, TodoItem
-from services.memory import MemoryService
+from services.memory import create_memory_service
 from services.planner import PlanningService
 from services.reporter import ReportingService
 from services.reviewer import ReviewerService
@@ -47,7 +59,7 @@ class DeepResearchAgent:
 
     def __init__(self, config: Configuration | None = None) -> None:
         self.config = config or Configuration.from_env()
-        self.memory_service = MemoryService(self.config)
+        self.memory_service = create_memory_service(self.config)
         self.runtime_factory = AgentRuntimeFactory(self.config)
 
         self.note_tool = self.runtime_factory.note_tool
@@ -55,7 +67,6 @@ class DeepResearchAgent:
         self._tool_event_sink_enabled = False
         self._state_lock = Lock()
 
-        self.todo_agent = self.runtime_factory.create_agent(PLANNER_ROLE)
         self.report_agent = self.runtime_factory.create_agent(REPORTER_ROLE)
         self.review_agent = self.runtime_factory.create_agent(REVIEWER_ROLE)
         self.direct_answer_agent = self.runtime_factory.create_agent(DIRECT_ANSWER_ROLE)
@@ -69,16 +80,36 @@ class DeepResearchAgent:
             SOURCE_ROUTE_PLANNER_ROLE
         )
 
-        self.planner = PlanningService(self.todo_agent, self.config)
+        self.planner = PlanningService(
+            None,
+            self.config,
+            structured_planner=self._build_structured_runner(
+                PLANNER_ROLE,
+                PlannerTasksOutput,
+            ),
+            note_tool=self.note_tool,
+            tool_tracker=self._tool_tracker,
+        )
         self.summarizer = SummarizationService(
             self.runtime_factory.create_summarizer_factory(),
             self.config,
         )
         self.reporting = ReportingService(self.report_agent, self.config)
-        self.reviewer = ReviewerService(self.review_agent, self.config)
+        self.reviewer = ReviewerService(
+            self.review_agent,
+            self.config,
+            structured_reviewer=self._build_structured_runner(
+                REVIEWER_ROLE,
+                ReviewerOutput,
+            ),
+        )
         self.source_routing = SourceRoutingService(
             self.source_route_planner_agent,
             self.config,
+            structured_router=self._build_structured_runner(
+                SOURCE_ROUTE_PLANNER_ROLE,
+                SourceRouteOutput,
+            ),
         )
 
         self._evidence_policy = EvidencePolicy(self.config)
@@ -95,69 +126,25 @@ class DeepResearchAgent:
             self.response_mode_classifier_agent,
             self.memory_recall_selector_agent,
             task_log_loader=self.memory_service.load_recent_task_logs,
+            structured_response_mode_classifier=self._build_structured_runner(
+                RESPONSE_MODE_CLASSIFIER_ROLE,
+                ResponseModeSelectionOutput,
+            ),
+            structured_memory_recall_selector=self._build_structured_runner(
+                MEMORY_RECALL_SELECTOR_ROLE,
+                MemoryRecallSelectionOutput,
+            ),
         )
+        self._workflow_graph = build_deep_research_graph(self)
 
     def run(self, topic: str, session_id: str | None = None) -> SummaryStateOutput:
         """Execute the research workflow and return the final report."""
 
-        state = self._build_state(topic, session_id)
-        self._prepare_tasks(state)
-
-        max_rounds = (
-            1
-            if state.response_mode != RESPONSE_MODE_DEEP_RESEARCH
-            else max(1, int(self.config.max_research_rounds))
-        )
-        current_round = 1
-
-        while current_round <= max_rounds:
-            pending_tasks = self._pending_tasks_for_round(state, current_round)
-            if not pending_tasks:
-                break
-
-            for task in pending_tasks:
-                result = self._consume_execution(
-                    self._execute_task(state, task, emit_stream=False),
-                )
-                self._finalize_task_result(state, task, result)
-
-            if current_round >= max_rounds:
-                break
-
-            review = self.reviewer.review_progress(state, current_round)
-            if review.is_sufficient or not review.followup_tasks:
-                break
-
-            appended_tasks = self._append_followup_tasks(
-                state,
-                review.followup_tasks,
-                round_id=current_round + 1,
-            )
-            if not appended_tasks:
-                break
-
-            current_round += 1
-
-        if state.response_mode == RESPONSE_MODE_DEEP_RESEARCH:
-            report = self.reporting.generate_report(state)
-            report_tool_events = self._drain_tool_events(None)
-            self._apply_tool_event_bindings(state.todo_items, report_tool_events)
-        else:
-            report = self._build_single_task_report(state)
-
-        state.structured_report = report
-        state.running_summary = report
-        self._persist_final_report(state, report)
-        self.memory_service.save_session_turn(state, report)
-        state.recalled_context = {
-            **(state.recalled_context or {}),
-            **self.memory_service.refresh_working_memory(state.session_id),
-        }
-        self._capture_profile_memory(state)
-        self.memory_service.save_report_memory(state.run_id, state, report)
-        if state.response_mode == RESPONSE_MODE_DEEP_RESEARCH:
-            self.memory_service.consolidate_semantic_facts(state.run_id, topic, report)
-
+        state = self._create_state(topic, session_id)
+        workflow_state = self._build_workflow_input(state, streaming=False)
+        final_state = self._invoke_workflow(workflow_state)
+        state = final_state["state"]
+        report = state.structured_report or state.running_summary or "暂无可用信息"
         return SummaryStateOutput(
             session_id=state.session_id,
             running_summary=report,
@@ -165,73 +152,176 @@ class DeepResearchAgent:
             todo_items=state.todo_items,
         )
 
+    def _build_structured_runner(
+        self,
+        role_id: str,
+        schema: type[Any],
+    ) -> StructuredOutputRunner[Any] | None:
+        """Best-effort LangChain structured runner construction."""
+
+        spec = get_agent_spec(role_id)
+        try:
+            model = build_chat_model(self.config, overrides=spec.llm_overrides)
+        except Exception:
+            logger.exception("Failed to initialize structured runner for role %s", role_id)
+            return None
+
+        return StructuredOutputRunner(
+            model,
+            system_prompt=spec.system_prompt,
+            schema=schema,
+            agent_name=spec.display_name,
+        )
+
+    @staticmethod
+    def _build_workflow_input(
+        state: SummaryState,
+        *,
+        streaming: bool,
+    ) -> DeepResearchWorkflowState:
+        """Build the initial LangGraph state payload."""
+
+        return {
+            "state": state,
+            "streaming": streaming,
+            "current_round": 1,
+            "max_rounds": 1,
+            "step_counter": 1,
+            "final_report": None,
+            "continue_research": False,
+        }
+
+    def _invoke_workflow(
+        self,
+        workflow_state: DeepResearchWorkflowState,
+    ) -> DeepResearchWorkflowState:
+        """Run the LangGraph workflow and always reset the tool sink."""
+
+        try:
+            return self._workflow_graph.invoke(workflow_state)
+        finally:
+            self._set_tool_event_sink(None)
+
     def run_stream(self, topic: str, session_id: str | None = None) -> Iterator[dict[str, Any]]:
         """Execute the workflow yielding incremental progress events."""
 
         state = self._create_state(topic, session_id)
-        yield {
-            "type": "session",
-            "session_id": state.session_id,
-            "run_id": state.run_id,
-        }
-        yield {
-            "type": "status",
-            "message": "正在召回历史上下文",
-        }
+        workflow_state = self._build_workflow_input(state, streaming=True)
+        try:
+            for chunk in self._workflow_graph.stream(
+                workflow_state,
+                stream_mode="custom",
+                version="v2",
+            ):
+                if chunk.get("type") != "custom":
+                    continue
+                payload = chunk.get("data")
+                if isinstance(payload, dict):
+                    yield payload
+        finally:
+            self._set_tool_event_sink(None)
+
+    def _graph_bootstrap_node(
+        self,
+        workflow_state: DeepResearchWorkflowState,
+    ) -> DeepResearchWorkflowState:
+        """Initialize recalled context, response mode, and first-round tasks."""
+
+        state = workflow_state["state"]
+        is_streaming = bool(workflow_state.get("streaming"))
+        self._set_tool_event_sink(self._stream_writer_or_none() if is_streaming else None)
+        self._emit_event(
+            {
+                "type": "session",
+                "session_id": state.session_id,
+                "run_id": state.run_id,
+            }
+        )
+        self._emit_event({"type": "status", "message": "正在召回历史上下文"})
         state.recalled_context = self.memory_service.load_relevant_context(
             state.session_id,
-            topic,
+            state.research_topic,
             exclude_run_id=state.run_id,
         )
-        yield {
-            "type": "status",
-            "message": "正在判断响应模式",
-        }
-        state.response_mode = self._classify_response_mode(topic, state.recalled_context)
-        yield {
-            "type": "response_mode",
-            "response_mode": state.response_mode,
-            "label": self._response_mode_label(state.response_mode),
-        }
-        logger.debug("Starting streaming research: topic=%s", topic)
-        yield {
-            "type": "status",
-            "message": self._initial_status_message(state.response_mode),
-            "response_mode": state.response_mode,
-        }
-
-        if state.response_mode == RESPONSE_MODE_DEEP_RESEARCH:
-            yield {
+        self._emit_event({"type": "status", "message": "正在判断响应模式"})
+        state.response_mode = self._classify_response_mode(
+            state.research_topic,
+            state.recalled_context,
+        )
+        self._emit_event(
+            {
+                "type": "response_mode",
+                "response_mode": state.response_mode,
+                "label": self._response_mode_label(state.response_mode),
+            }
+        )
+        self._emit_event(
+            {
                 "type": "status",
-                "message": "正在规划任务",
+                "message": self._initial_status_message(state.response_mode),
                 "response_mode": state.response_mode,
             }
+        )
 
-        planner_events = self._prepare_tasks(state, stream_mode=True)
+        if state.response_mode == RESPONSE_MODE_DEEP_RESEARCH:
+            self._emit_event(
+                {
+                    "type": "status",
+                    "message": "正在规划任务",
+                    "response_mode": state.response_mode,
+                }
+            )
+
+        planner_events = self._prepare_tasks(
+            state,
+            stream_mode=is_streaming,
+        )
         for event in planner_events:
-            yield event
+            self._emit_event(event)
 
-        yield {
-            "type": "todo_list",
-            "tasks": [self._serialize_task(t) for t in state.todo_items],
-            "step": 0,
-            "response_mode": state.response_mode,
-        }
+        self._emit_event(
+            {
+                "type": "todo_list",
+                "tasks": [self._serialize_task(task) for task in state.todo_items],
+                "step": 0,
+                "response_mode": state.response_mode,
+            }
+        )
 
         max_rounds = (
             1
             if state.response_mode != RESPONSE_MODE_DEEP_RESEARCH
             else max(1, int(self.config.max_research_rounds))
         )
-        current_round = 1
-        step_counter = 1
+        return {
+            "state": state,
+            "current_round": 1,
+            "max_rounds": max_rounds,
+            "step_counter": workflow_state.get("step_counter", 1),
+            "final_report": None,
+            "continue_research": False,
+        }
 
-        while current_round <= max_rounds:
-            pending_tasks = self._pending_tasks_for_round(state, current_round)
-            if not pending_tasks:
-                break
+    def _graph_execute_round_node(
+        self,
+        workflow_state: DeepResearchWorkflowState,
+    ) -> DeepResearchWorkflowState:
+        """Execute all pending tasks in the current round."""
 
-            yield {
+        state = workflow_state["state"]
+        current_round = int(workflow_state.get("current_round", 1))
+        step_counter = int(workflow_state.get("step_counter", 1))
+        pending_tasks = self._pending_tasks_for_round(state, current_round)
+
+        if not pending_tasks:
+            return {
+                **workflow_state,
+                "state": state,
+                "step_counter": step_counter,
+            }
+
+        self._emit_event(
+            {
                 "type": "status",
                 "message": (
                     f"开始第 {current_round} 轮研究"
@@ -242,13 +332,26 @@ class DeepResearchAgent:
                 ),
                 "response_mode": state.response_mode,
             }
+        )
 
-            for task in pending_tasks:
-                step = step_counter
-                step_counter += 1
-                task.stream_token = f"task_{task.id}"
+        if self._should_execute_round_in_parallel(state, pending_tasks, workflow_state):
+            step_counter = self._execute_pending_tasks_parallel(
+                state,
+                pending_tasks,
+                step_counter=step_counter,
+            )
+            return {
+                **workflow_state,
+                "state": state,
+                "step_counter": step_counter,
+            }
 
-                yield {
+        for task in pending_tasks:
+            step = step_counter
+            step_counter += 1
+            task.stream_token = f"task_{task.id}"
+            self._emit_event(
+                {
                     "type": "task_status",
                     "task_id": task.id,
                     "status": "in_progress",
@@ -273,19 +376,22 @@ class DeepResearchAgent:
                     "route_reason": task.route_reason,
                     "response_mode": state.response_mode,
                 }
+            )
 
-                try:
-                    result = yield from self._stream_task_execution(
-                        state,
-                        task,
-                        step=step,
-                    )
-                    self._finalize_task_result(state, task, result)
-                except Exception as exc:  # pragma: no cover - defensive guardrail
-                    logger.exception("Task execution failed", exc_info=exc)
-                    task.status = "failed"
-                    self.memory_service.save_task_log(state.run_id, task)
-                    yield {
+            try:
+                result = self._execute_task_with_optional_stream(
+                    state,
+                    task,
+                    step=step,
+                    streaming=bool(workflow_state.get("streaming")),
+                )
+                self._finalize_task_result(state, task, result)
+            except Exception as exc:  # pragma: no cover - defensive guardrail
+                logger.exception("Task execution failed", exc_info=exc)
+                task.status = "failed"
+                self.memory_service.save_task_log(state.run_id, task)
+                self._emit_event(
+                    {
                         "type": "task_status",
                         "task_id": task.id,
                         "status": "failed",
@@ -303,59 +409,242 @@ class DeepResearchAgent:
                         "route_reason": task.route_reason,
                         "response_mode": state.response_mode,
                     }
+                )
 
-            if current_round >= max_rounds:
-                break
+        return {
+            **workflow_state,
+            "state": state,
+            "step_counter": step_counter,
+        }
 
-            yield {
+    def _should_execute_round_in_parallel(
+        self,
+        state: SummaryState,
+        pending_tasks: list[TodoItem],
+        workflow_state: DeepResearchWorkflowState,
+    ) -> bool:
+        """Parallelize independent planner tasks for non-streaming deep research."""
+
+        if state.response_mode != RESPONSE_MODE_DEEP_RESEARCH:
+            return False
+        if bool(workflow_state.get("streaming")):
+            return False
+        if len(pending_tasks) <= 1:
+            return False
+        return int(self.config.max_parallel_research_tasks or 1) > 1
+
+    def _execute_pending_tasks_parallel(
+        self,
+        state: SummaryState,
+        pending_tasks: list[TodoItem],
+        *,
+        step_counter: int,
+    ) -> int:
+        """Execute same-round research tasks concurrently and merge results safely."""
+
+        assignments: list[tuple[TodoItem, int]] = []
+        for task in pending_tasks:
+            step = step_counter
+            step_counter += 1
+            task.stream_token = f"task_{task.id}"
+            assignments.append((task, step))
+            self._emit_event(
+                {
+                    "type": "task_status",
+                    "task_id": task.id,
+                    "status": "in_progress",
+                    "title": task.title,
+                    "intent": task.intent,
+                    "note_id": task.note_id,
+                    "note_path": task.note_path,
+                    "attempt_count": task.attempt_count,
+                    "search_backend": task.search_backend,
+                    "evidence_count": task.evidence_count,
+                    "top_score": task.top_score,
+                    "needs_followup": task.needs_followup,
+                    "step": step,
+                    "stream_token": task.stream_token,
+                    "round_id": task.round_id,
+                    "origin": task.origin,
+                    "parent_task_id": task.parent_task_id,
+                    "planned_capabilities": list(task.planned_capabilities),
+                    "current_capability": task.current_capability,
+                    "route_intent_label": task.route_intent_label,
+                    "route_confidence": task.route_confidence,
+                    "route_reason": task.route_reason,
+                    "response_mode": state.response_mode,
+                }
+            )
+
+        max_workers = min(
+            len(assignments),
+            max(1, int(self.config.max_parallel_research_tasks or 1)),
+        )
+        logger.info(
+            "Executing %d deep-research tasks with parallelism=%d",
+            len(assignments),
+            max_workers,
+        )
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_map = {
+                executor.submit(
+                    self._execute_task_with_optional_stream,
+                    state,
+                    task,
+                    step=step,
+                    streaming=False,
+                ): (task, step)
+                for task, step in assignments
+            }
+
+            for future in as_completed(future_map):
+                task, step = future_map[future]
+                try:
+                    result = future.result()
+                    self._emit_recorded_task_events(
+                        result,
+                        task=task,
+                        step=step,
+                        response_mode=state.response_mode,
+                    )
+                    self._finalize_task_result(state, task, result)
+                except Exception as exc:  # pragma: no cover - defensive guardrail
+                    logger.exception("Parallel task execution failed", exc_info=exc)
+                    task.status = "failed"
+                    self.memory_service.save_task_log(state.run_id, task)
+                    self._emit_event(
+                        {
+                            "type": "task_status",
+                            "task_id": task.id,
+                            "status": "failed",
+                            "detail": str(exc),
+                            "title": task.title,
+                            "intent": task.intent,
+                            "note_id": task.note_id,
+                            "note_path": task.note_path,
+                            "step": step,
+                            "stream_token": task.stream_token,
+                            "planned_capabilities": list(task.planned_capabilities),
+                            "current_capability": task.current_capability,
+                            "route_intent_label": task.route_intent_label,
+                            "route_confidence": task.route_confidence,
+                            "route_reason": task.route_reason,
+                            "response_mode": state.response_mode,
+                        }
+                    )
+
+        return step_counter
+
+    def _emit_recorded_task_events(
+        self,
+        result: TaskExecutionResult,
+        *,
+        task: TodoItem,
+        step: int,
+        response_mode: str,
+    ) -> None:
+        """Replay task-local events collected during non-streaming parallel execution."""
+
+        for event in result.events:
+            payload = dict(event.payload)
+            if payload.get("task_id") == task.id:
+                payload.setdefault("step", step)
+                payload["stream_token"] = task.stream_token
+                if payload.get("type") in {"task_status", "sources"}:
+                    payload["response_mode"] = response_mode
+            self._emit_event(payload)
+
+    def _graph_review_round_node(
+        self,
+        workflow_state: DeepResearchWorkflowState,
+    ) -> DeepResearchWorkflowState:
+        """Review current coverage and optionally append follow-up tasks."""
+
+        state = workflow_state["state"]
+        current_round = int(workflow_state.get("current_round", 1))
+        self._emit_event(
+            {
                 "type": "status",
                 "message": f"第 {current_round} 轮任务完成，正在评估研究覆盖度",
                 "response_mode": state.response_mode,
             }
-            review = self.reviewer.review_progress(state, current_round)
-            if review.is_sufficient or not review.followup_tasks:
-                yield {
+        )
+        review = self.reviewer.review_progress(state, current_round)
+        if review.is_sufficient or not review.followup_tasks:
+            self._emit_event(
+                {
                     "type": "status",
                     "message": "当前研究已覆盖核心问题，准备生成最终报告",
                     "response_mode": state.response_mode,
                 }
-                break
-
-            appended_tasks = self._append_followup_tasks(
-                state,
-                review.followup_tasks,
-                round_id=current_round + 1,
             )
-            if not appended_tasks:
-                yield {
+            return {
+                **workflow_state,
+                "state": state,
+                "continue_research": False,
+            }
+
+        appended_tasks = self._append_followup_tasks(
+            state,
+            review.followup_tasks,
+            round_id=current_round + 1,
+        )
+        if not appended_tasks:
+            self._emit_event(
+                {
                     "type": "status",
                     "message": "未生成有效追加任务，准备生成最终报告",
                     "response_mode": state.response_mode,
                 }
-                break
+            )
+            return {
+                **workflow_state,
+                "state": state,
+                "continue_research": False,
+            }
 
-            yield {
+        self._emit_event(
+            {
                 "type": "status",
                 "message": f"发现研究缺口：{review.overall_gap or '需要补充证据'}，已追加 {len(appended_tasks)} 个任务",
                 "response_mode": state.response_mode,
             }
-            yield {
+        )
+        self._emit_event(
+            {
                 "type": "todo_list",
-                "tasks": [self._serialize_task(t) for t in state.todo_items],
+                "tasks": [self._serialize_task(task) for task in state.todo_items],
                 "step": 0,
                 "response_mode": state.response_mode,
             }
-            current_round += 1
-
-        yield {
-            "type": "status",
-            "message": (
-                "任务执行完成，正在生成最终报告"
-                if state.response_mode == RESPONSE_MODE_DEEP_RESEARCH
-                else "回答已生成，正在整理最终输出"
-            ),
-            "response_mode": state.response_mode,
+        )
+        return {
+            **workflow_state,
+            "state": state,
+            "current_round": current_round + 1,
+            "continue_research": True,
         }
+
+    def _graph_generate_report_node(
+        self,
+        workflow_state: DeepResearchWorkflowState,
+    ) -> DeepResearchWorkflowState:
+        """Generate the final report or single-task answer."""
+
+        state = workflow_state["state"]
+        step_counter = int(workflow_state.get("step_counter", 1))
+        self._emit_event(
+            {
+                "type": "status",
+                "message": (
+                    "任务执行完成，正在生成最终报告"
+                    if state.response_mode == RESPONSE_MODE_DEEP_RESEARCH
+                    else "回答已生成，正在整理最终输出"
+                ),
+                "response_mode": state.response_mode,
+            }
+        )
 
         if state.response_mode == RESPONSE_MODE_DEEP_RESEARCH:
             report = self.reporting.generate_report(state)
@@ -363,12 +652,27 @@ class DeepResearchAgent:
             report_tool_events = self._drain_tool_events(final_step)
             self._apply_tool_event_bindings(state.todo_items, report_tool_events)
             for event in report_tool_events:
-                yield event
+                self._emit_event(event)
         else:
             report = self._build_single_task_report(state)
 
         state.structured_report = report
         state.running_summary = report
+
+        return {
+            **workflow_state,
+            "state": state,
+            "final_report": report,
+        }
+
+    def _graph_persist_outputs_node(
+        self,
+        workflow_state: DeepResearchWorkflowState,
+    ) -> DeepResearchWorkflowState:
+        """Persist the final report and emit completion events."""
+
+        state = workflow_state["state"]
+        report = workflow_state.get("final_report") or state.running_summary or "暂无可用信息"
 
         note_event = self._persist_final_report(state, report)
         self.memory_service.save_session_turn(state, report)
@@ -379,23 +683,128 @@ class DeepResearchAgent:
         self._capture_profile_memory(state)
         self.memory_service.save_report_memory(state.run_id, state, report)
         if state.response_mode == RESPONSE_MODE_DEEP_RESEARCH:
-            yield {
-                "type": "status",
-                "message": "最终报告已生成，正在沉淀语义记忆",
+            self._emit_event(
+                {
+                    "type": "status",
+                    "message": "最终报告已生成，正在沉淀语义记忆",
+                    "response_mode": state.response_mode,
+                }
+            )
+            self.memory_service.consolidate_semantic_facts(
+                state.run_id,
+                state.research_topic,
+                report,
+            )
+        if note_event:
+            self._emit_event(note_event)
+
+        self._emit_event(
+            {
+                "type": "final_report",
+                "report": report,
+                "note_id": state.report_note_id,
+                "note_path": state.report_note_path,
                 "response_mode": state.response_mode,
             }
-            self.memory_service.consolidate_semantic_facts(state.run_id, topic, report)
-        if note_event:
-            yield note_event
+        )
+        self._emit_event({"type": "done"})
+        self._set_tool_event_sink(None)
 
-        yield {
-            "type": "final_report",
-            "report": report,
-            "note_id": state.report_note_id,
-            "note_path": state.report_note_path,
-            "response_mode": state.response_mode,
+        return {
+            **workflow_state,
+            "state": state,
+            "final_report": report,
         }
-        yield {"type": "done"}
+
+    def _route_after_bootstrap(self, workflow_state: DeepResearchWorkflowState) -> str:
+        """Route to task execution when there is pending work."""
+
+        state = workflow_state["state"]
+        current_round = int(workflow_state.get("current_round", 1))
+        if self._pending_tasks_for_round(state, current_round):
+            return "execute_round"
+        return "generate_report"
+
+    def _route_after_execute_round(self, workflow_state: DeepResearchWorkflowState) -> str:
+        """Route to reviewer only when another deep-research round is possible."""
+
+        state = workflow_state["state"]
+        current_round = int(workflow_state.get("current_round", 1))
+        max_rounds = int(workflow_state.get("max_rounds", 1))
+        if state.response_mode == RESPONSE_MODE_DEEP_RESEARCH and current_round < max_rounds:
+            return "review_round"
+        return "generate_report"
+
+    @staticmethod
+    def _route_after_review_round(workflow_state: DeepResearchWorkflowState) -> str:
+        """Route based on whether follow-up tasks were appended."""
+
+        if workflow_state.get("continue_research"):
+            return "execute_round"
+        return "generate_report"
+
+    def _execute_task_with_optional_stream(
+        self,
+        state: SummaryState,
+        task: TodoItem,
+        *,
+        step: int,
+        streaming: bool,
+    ) -> TaskExecutionResult:
+        """Execute one task and bridge emitted events into LangGraph custom stream."""
+
+        if streaming:
+            generator = self._stream_task_execution(
+                state,
+                task,
+                step=step,
+            )
+            return self._consume_execution_stream(generator)
+
+        return self._consume_execution(
+            self._execute_task(
+                state,
+                task,
+                emit_stream=False,
+                step=step,
+            )
+        )
+
+    def _consume_execution_stream(
+        self,
+        generator: Generator[dict[str, Any], None, TaskExecutionResult],
+    ) -> TaskExecutionResult:
+        """Consume a streaming generator while forwarding every payload."""
+
+        while True:
+            try:
+                payload = next(generator)
+                self._emit_event(payload)
+            except StopIteration as stop:
+                return stop.value
+
+    def _emit_event(self, payload: dict[str, Any]) -> None:
+        """Emit a custom stream event when running inside LangGraph streaming."""
+
+        writer = self._stream_writer_or_none()
+        if writer is None:
+            return
+        writer(payload)
+
+    def _stream_writer_or_none(self) -> Callable[[dict[str, Any]], None] | None:
+        """Return the LangGraph stream writer when available."""
+
+        try:
+            from langgraph.config import get_stream_writer
+
+            return get_stream_writer()
+        except Exception:
+            return None
+
+    def _has_stream_writer(self) -> bool:
+        """Return whether the current graph run has an attached stream writer."""
+
+        return self._stream_writer_or_none() is not None
 
     def _create_state(self, topic: str, session_id: str | None) -> SummaryState:
         state = SummaryState(research_topic=topic)
@@ -433,6 +842,7 @@ class DeepResearchAgent:
     ) -> list[dict[str, Any]]:
         events: list[dict[str, Any]] = []
 
+        #
         if state.response_mode == RESPONSE_MODE_MEMORY_RECALL:
             state.todo_items = [self._build_memory_recall_task(state)]
             self._initialize_round_metadata(state.todo_items, round_id=1, origin="memory")
@@ -553,8 +963,10 @@ class DeepResearchAgent:
         task.summary = patch.summary
         task.sources_summary = patch.sources_summary
         task.notices = list(patch.notices)
-        task.note_id = patch.note_id
-        task.note_path = patch.note_path
+        if patch.note_id:
+            task.note_id = patch.note_id
+        if patch.note_path:
+            task.note_path = patch.note_path
         task.attempt_count = patch.attempt_count
         task.search_backend = patch.search_backend
         task.evidence_count = patch.evidence_count
@@ -619,6 +1031,7 @@ class DeepResearchAgent:
             title="会话历史回顾",
             intent="基于当前会话历史回答用户是否曾讨论过相关主题，并提炼已有结论",
             query=state.research_topic,
+            queries=[state.research_topic] if state.research_topic else [],
             origin="memory",
         )
 
@@ -629,6 +1042,7 @@ class DeepResearchAgent:
             title="个性化直接回答",
             intent="结合已召回的长期目标、偏好和会话上下文，给出简洁明确的回答",
             query=state.research_topic,
+            queries=[state.research_topic] if state.research_topic else [],
             origin="direct",
         )
 
@@ -688,7 +1102,8 @@ class DeepResearchAgent:
         for item in followup_tasks:
             title = str(item.get("title") or "").strip()
             intent = str(item.get("intent") or "").strip()
-            query = str(item.get("query") or "").strip()
+            queries = self._normalize_task_queries(item.get("queries"), item.get("query"))
+            query = queries[0] if queries else ""
             raw_parent = item.get("parent_task_id")
 
             if not (title and intent and query):
@@ -707,6 +1122,7 @@ class DeepResearchAgent:
                 title=title,
                 intent=intent,
                 query=query,
+                queries=queries,
                 round_id=round_id,
                 origin="reviewer",
                 parent_task_id=parent_task_id,
@@ -729,11 +1145,14 @@ class DeepResearchAgent:
 
         for task in existing_tasks:
             task_title = re.sub(r"\s+", "", task.title).lower()
-            task_query = re.sub(r"\s+", " ", (task.latest_query or task.query)).strip().lower()
             if task_title == normalized_title:
                 return True
-            if task_query and task_query == normalized_query:
-                return True
+            task_queries = list(task.queries or [])
+            task_queries.extend([task.latest_query or "", task.query or ""])
+            for task_query_value in task_queries:
+                task_query = re.sub(r"\s+", " ", task_query_value).strip().lower()
+                if task_query and task_query == normalized_query:
+                    return True
 
         return False
 
@@ -744,6 +1163,7 @@ class DeepResearchAgent:
             "title": task.title,
             "intent": task.intent,
             "query": task.query,
+            "queries": list(task.queries or [task.query]),
             "round_id": task.round_id,
             "origin": task.origin,
             "parent_task_id": task.parent_task_id,
@@ -766,6 +1186,23 @@ class DeepResearchAgent:
             "route_confidence": task.route_confidence,
             "route_reason": task.route_reason,
         }
+
+    @staticmethod
+    def _normalize_task_queries(raw_queries: Any, raw_query: Any) -> list[str]:
+        values: list[str] = []
+        if isinstance(raw_queries, list):
+            values.extend(str(query or "") for query in raw_queries)
+        legacy_query = str(raw_query or "").strip()
+        if legacy_query:
+            values.append(legacy_query)
+
+        normalized: list[str] = []
+        for value in values:
+            for part in str(value or "").split(";"):
+                query = re.sub(r"\s+", " ", part).strip()
+                if query and query not in normalized:
+                    normalized.append(query)
+        return normalized[:4]
 
     def _persist_final_report(self, state: SummaryState, report: str) -> dict[str, Any] | None:
         if not self.note_tool or not report or not report.strip():

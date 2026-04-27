@@ -174,12 +174,135 @@
 - service 负责“怎么调用这个角色”
 - runtime 负责“怎么真正调用模型”
 
-## 6. 对 Summarizer 这段代码的理解
+## 6. 当前这套系统与 LangChain / LangGraph 的映射
+
+这次重构最重要的判断：
+
+> 当前后端已经有完整工作流雏形，问题不在“有没有流程”，而在“流程和模型调用都绑在 hello-agents 文本协议上”。
+
+### 6.1 现有 orchestrator 本质上就是手写 workflow engine
+
+文件：
+- [orchestrator/deep_research.py](./orchestrator/deep_research.py)
+
+当前已经明确编码了：
+
+- `load memory context`
+- `classify response mode`
+- `plan todo list`
+- `execute task`
+- `review progress`
+- `append follow-up tasks`
+- `generate report`
+- `persist memory / report`
+
+所以迁到 LangGraph 时，不应该推倒业务逻辑，而应该把这些阶段拆成 graph node。
+
+### 6.2 当前最脆弱的点不是 prompt，而是“文本 -> JSON”解析
+
+高风险位置：
+
+- [services/planner.py](./services/planner.py)
+- [services/reviewer.py](./services/reviewer.py)
+- [services/source_routing.py](./services/source_routing.py)
+- [execution/special_mode_executor.py](./execution/special_mode_executor.py)
+
+共同模式：
+
+- 让模型输出 JSON 文本
+- 再手工截取 `{...}` 或 `[...]`
+- 再做字段校验和兜底
+
+这类代码最适合优先迁到 LangChain structured output。
+
+### 6.3 note 工具不是标准 tool calling，而是文本协议
+
+文件：
+- [agent_runtime/tool_protocol.py](./agent_runtime/tool_protocol.py)
+- [services/tool_events.py](./services/tool_events.py)
+
+当前 note 相关协作依赖的是：
+
+- 模型输出 `[TOOL_CALL:note:{...}]`
+- runtime / tracker 解析并执行
+- 前端通过 `tool_call` 事件拿到 note 创建 / 更新结果
+
+因此不能把所有角色一刀切改成“纯 structured output”。
+
+更合理的切法是：
+
+- 无需 tool 的角色先迁到 LangChain structured output
+- 仍依赖 note 协议的角色先保留现有执行链
+- planner 如果改成 structured output，需要由 Python 侧补做任务笔记同步
+
+## 7. 迁移策略
+
+### 7.1 第一阶段
+
+目标：
+
+- 保留现有 FastAPI API 与 SSE 事件格式
+- 保留 `ResearchTaskExecutor`、`MemoryService`、capability 执行链
+- 引入 LangChain model factory
+- 优先把以下角色迁到 structured output：
+  - planner
+  - reviewer
+  - source router
+
+实现原则：
+
+- planner 的任务笔记不再依赖模型自己写 `[TOOL_CALL:note:...]`，改成 Python 侧确定性创建
+- reviewer / source router 不需要 tools，直接 schema 化
+- 仍需要 note 的 summarizer / reporter / direct-answer 相关角色暂时保留 hello-agents
+
+当前进展：
+
+- 已新增 `llm/` 层承接 LangChain model factory 与 structured output schema
+- `planner`、`reviewer`、`source_router` 已优先走 structured output
+- `response_mode_classifier` 与 `memory_recall_selector` 也已切到同一套 structured output runner
+- `hello-agents` 已从运行时实现中移除，当前 `agent_runtime` 改由 LangChain 本地包装实现
+
+### 7.2 第二阶段
+
+目标：
+
+- 用 LangGraph 重写 [orchestrator/deep_research.py](./orchestrator/deep_research.py) 的主执行流
+
+预期 node：
+
+- `load_context`
+- `classify_response_mode`
+- `plan_tasks`
+- `execute_round`
+- `review_round`
+- `generate_report`
+- `persist_outputs`
+
+当前进展：
+
+- 已新增 `graph/` 目录
+- `DeepResearchAgent.run()` 与 `run_stream()` 已改为通过 LangGraph workflow 进入主流程
+- 当前 graph node 仍大量复用原 orchestrator helper，因此这是“graph 化编排”，不是“业务重写”
+
+### 7.3 第三阶段
+
+目标：
+
+- 把当前手工 SSE 事件流改成 LangGraph stream
+- 把 graph stream 映射回现有前端事件格式，避免前端大改
+
+当前进展：
+
+- `run_stream()` 已通过 LangGraph `stream_mode="custom"` 输出旧事件格式
+- tool 事件通过 `ToolCallTracker` + LangGraph writer 桥接
+- 仍需在真实数据库和真实模型下做端到端回归验证
+
+## 8. 对 Summarizer 这段代码的理解
 
 文件：
 - [services/summarizer.py](./services/summarizer.py)
 
-### 6.1 为什么 `stream_task_summary()` 里有函数内套函数
+### 8.1 为什么 `stream_task_summary()` 里有函数内套函数
 
 因为它想同时返回两样东西：
 
@@ -195,7 +318,7 @@
 
 所以这里用了闭包。
 
-### 6.2 `generator()` 和 `get_summary` 为什么一个有括号一个没有
+### 8.2 `generator()` 和 `get_summary` 为什么一个有括号一个没有
 
 代码：
 
@@ -210,7 +333,7 @@ return generator(), get_summary
 
 如果这里写成 `get_summary()`，就会过早取最终结果。
 
-### 6.3 `raw_buffer` / `segment` / `visible_output`
+### 8.3 `raw_buffer` / `segment` / `visible_output`
 
 这三个变量可以这样理解：
 
@@ -234,7 +357,7 @@ raw_buffer 经过 flush_visible -> segment
 segment 累加进 -> visible_output
 ```
 
-### 6.4 `find()` 返回 `-1` 的含义
+### 8.4 `find()` 返回 `-1` 的含义
 
 例如：
 
@@ -251,7 +374,7 @@ start = raw_buffer.find("<think>", emit_index)
 
 > 从当前游标开始，后面没有 `<think>` 了
 
-### 6.5 这段流式逻辑本质上在做什么
+### 8.5 这段流式逻辑本质上在做什么
 
 不是“等全部输出完再处理”，而是：
 

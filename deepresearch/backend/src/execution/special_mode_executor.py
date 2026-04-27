@@ -11,6 +11,8 @@ from typing import Any
 from agent_runtime.interfaces import AgentLike
 from config import Configuration
 from execution.models import ExecutionEvent, TaskExecutionResult, TaskPatch
+from llm.schemas import MemoryRecallSelectionOutput, ResponseModeSelectionOutput
+from llm.structured import StructuredOutputRunner
 from models import SummaryState, TodoItem
 from services.text_processing import dedupe_markdown_blocks, strip_tool_calls
 from utils import strip_thinking_tokens
@@ -56,15 +58,25 @@ class SpecialModeExecutor:
         self,
         config: Configuration,
         direct_answer_agent: AgentLike,
-        response_mode_classifier_agent: AgentLike,
-        memory_recall_selector_agent: AgentLike,
+        response_mode_classifier_agent: AgentLike | None,
+        memory_recall_selector_agent: AgentLike | None,
         task_log_loader: Callable[..., list[dict[str, Any]]] | None = None,
+        structured_response_mode_classifier: StructuredOutputRunner[
+            ResponseModeSelectionOutput
+        ]
+        | None = None,
+        structured_memory_recall_selector: StructuredOutputRunner[
+            MemoryRecallSelectionOutput
+        ]
+        | None = None,
     ) -> None:
         self._config = config
         self._direct_answer_agent = direct_answer_agent
         self._response_mode_classifier_agent = response_mode_classifier_agent
         self._memory_recall_selector_agent = memory_recall_selector_agent
         self._task_log_loader = task_log_loader or self._default_task_log_loader
+        self._structured_response_mode_classifier = structured_response_mode_classifier
+        self._structured_memory_recall_selector = structured_memory_recall_selector
 
     def execute_memory_recall(
         self,
@@ -238,11 +250,8 @@ class SpecialModeExecutor:
     ) -> str:
         """Classify the best response mode with model-first routing."""
 
-        payload = self._run_json_agent(
-            self._response_mode_classifier_agent,
-            self._build_response_mode_classifier_input(topic, recalled_context),
-        )
-        selection = self._parse_mode_selection(payload)
+        prompt = self._build_response_mode_classifier_input(topic, recalled_context)
+        selection = self._select_response_mode(prompt)
         if selection is None:
             return RESPONSE_MODE_DEEP_RESEARCH
 
@@ -431,17 +440,14 @@ class SpecialModeExecutor:
                 "profile_facts": [],
             }
 
-        payload = self._run_json_agent(
-            self._memory_recall_selector_agent,
-            self._build_memory_recall_selector_input(
-                query,
-                task_logs=task_logs,
-                working_memory_summary=working_memory_summary,
-                recent_turns=recent_turns,
-                profile_facts=profile_facts,
-            ),
+        prompt = self._build_memory_recall_selector_input(
+            query,
+            task_logs=task_logs,
+            working_memory_summary=working_memory_summary,
+            recent_turns=recent_turns,
+            profile_facts=profile_facts,
         )
-        selection = self._parse_memory_selection(payload)
+        selection = self._select_memory_candidates(prompt)
         if selection is None or not any(selection.values()):
             return self._memory_recall_fallback(
                 task_logs=task_logs,
@@ -739,6 +745,57 @@ class SpecialModeExecutor:
         finally:
             agent.clear_history()
 
+    def _select_response_mode(self, prompt: str) -> dict[str, Any] | None:
+        """Prefer structured output for response-mode classification."""
+
+        if self._structured_response_mode_classifier is not None:
+            try:
+                payload = self._structured_response_mode_classifier.invoke(prompt)
+                return {
+                    "response_mode": payload.response_mode,
+                    "confidence": self._clamp_confidence(payload.confidence),
+                    "reason": str(payload.reason or "").strip(),
+                }
+            except Exception:
+                pass
+
+        if self._response_mode_classifier_agent is None:
+            return None
+
+        payload = self._run_json_agent(
+            self._response_mode_classifier_agent,
+            prompt,
+        )
+        return self._parse_mode_selection(payload)
+
+    def _select_memory_candidates(self, prompt: str) -> dict[str, list[str]] | None:
+        """Prefer structured output for memory-recall material selection."""
+
+        if self._structured_memory_recall_selector is not None:
+            try:
+                payload = self._structured_memory_recall_selector.invoke(prompt)
+                return {
+                    "task_ids": self._normalize_id_list(
+                        payload.task_ids,
+                        limit=MEMORY_RECALL_TASK_LOG_LIMIT,
+                    ),
+                    "fact_ids": self._normalize_id_list(
+                        payload.fact_ids,
+                        limit=MEMORY_RECALL_FACT_LIMIT,
+                    ),
+                }
+            except Exception:
+                pass
+
+        if self._memory_recall_selector_agent is None:
+            return None
+
+        payload = self._run_json_agent(
+            self._memory_recall_selector_agent,
+            prompt,
+        )
+        return self._parse_memory_selection(payload)
+
     def _parse_mode_selection(self, payload: dict[str, Any] | list | None) -> dict[str, Any] | None:
         """Validate classifier JSON and normalize confidence."""
 
@@ -766,22 +823,31 @@ class SpecialModeExecutor:
         if not isinstance(payload, dict):
             return None
 
-        def normalize_ids(value: Any, *, limit: int) -> list[str]:
-            if not isinstance(value, list):
-                return []
-            normalized: list[str] = []
-            for item in value:
-                candidate = str(item or "").strip()
-                if candidate and candidate not in normalized:
-                    normalized.append(candidate)
-                if len(normalized) >= limit:
-                    break
-            return normalized
-
         return {
-            "task_ids": normalize_ids(payload.get("task_ids"), limit=MEMORY_RECALL_TASK_LOG_LIMIT),
-            "fact_ids": normalize_ids(payload.get("fact_ids"), limit=MEMORY_RECALL_FACT_LIMIT),
+            "task_ids": self._normalize_id_list(
+                payload.get("task_ids"),
+                limit=MEMORY_RECALL_TASK_LOG_LIMIT,
+            ),
+            "fact_ids": self._normalize_id_list(
+                payload.get("fact_ids"),
+                limit=MEMORY_RECALL_FACT_LIMIT,
+            ),
         }
+
+    @staticmethod
+    def _normalize_id_list(value: Any, *, limit: int) -> list[str]:
+        """Normalize a list of arbitrary IDs while keeping caller order."""
+
+        if not isinstance(value, list):
+            return []
+        normalized: list[str] = []
+        for item in value:
+            candidate = str(item or "").strip()
+            if candidate and candidate not in normalized:
+                normalized.append(candidate)
+            if len(normalized) >= limit:
+                break
+        return normalized
 
     @staticmethod
     def _select_items_by_ids(

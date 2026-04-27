@@ -50,7 +50,10 @@ class ResearchTaskExecutor:
 
         runtime_task = replace(task)
         runtime_task.status = "in_progress"
-        runtime_task.latest_query = task.query
+        base_queries = self._task_queries(task)
+        runtime_task.queries = base_queries
+        runtime_task.query = base_queries[0]
+        runtime_task.latest_query = "; ".join(base_queries)
 
         local_events: list[ExecutionEvent] = []
         tool_events: list[dict[str, Any]] = []
@@ -82,8 +85,11 @@ class ResearchTaskExecutor:
                     if isinstance(note_path, str) and note_path:
                         runtime_task.note_path = note_path
             return drained
-
-        route_plan = self._source_routing.plan_capabilities(state.research_topic or task.query, runtime_task)
+        # 规划这条任务应该走哪些 capability
+        route_plan = self._source_routing.plan_capabilities(
+            state.research_topic or runtime_task.query,
+            runtime_task,
+        )
         runtime_task.planned_capabilities = list(
             route_plan.preferred_capabilities or DEFAULT_CAPABILITY_CHAIN
         )
@@ -104,7 +110,6 @@ class ResearchTaskExecutor:
 
         search_result: dict[str, Any] | None = None
         answer_text: str | None = None
-        current_query = task.query
         gap_reason: str | None = None
         deferred_notices: list[str] = []
 
@@ -114,13 +119,16 @@ class ResearchTaskExecutor:
 
             if index > 1:
                 runtime_task.needs_followup = True
-                next_query = self._evidence_policy.build_followup_query(
-                    task,
-                    base_query=current_query,
-                    gap_reason=gap_reason or "no_results",
-                    target_capability=capability_id,
-                )
-                runtime_task.latest_query = next_query
+                current_queries = [
+                    self._evidence_policy.build_followup_query(
+                        runtime_task,
+                        base_query=query,
+                        gap_reason=gap_reason or "no_results",
+                        target_capability=capability_id,
+                    )
+                    for query in base_queries
+                ]
+                runtime_task.latest_query = "; ".join(current_queries)
                 yield from emit(
                     {
                         "type": "query_rewrite",
@@ -129,66 +137,75 @@ class ResearchTaskExecutor:
                         "current_capability": capability_id,
                         "planned_capabilities": list(runtime_task.planned_capabilities),
                         "gap_reason": gap_reason,
-                        "previous_query": current_query,
-                        "rewritten_query": next_query,
+                        "previous_query": "; ".join(base_queries),
+                        "rewritten_query": current_queries[0] if current_queries else "",
+                        "rewritten_queries": list(current_queries),
                         "attempt": runtime_task.attempt_count + 1,
                     }
                 )
-                current_query = next_query
             else:
+                current_queries = list(base_queries)
+                runtime_task.latest_query = "; ".join(current_queries)
+
+            for query_index, current_query in enumerate(current_queries, start=1):
                 runtime_task.latest_query = current_query
+                yield from emit(
+                    self._build_stage_event(
+                        task=runtime_task,
+                        capability_id=capability_id,
+                        query=current_query,
+                        query_index=query_index,
+                        query_count=len(current_queries),
+                    )
+                )
 
-            yield from emit(
-                self._build_stage_event(
+                source_result, source_notices, source_answer, backend_label = dispatch_capability_search(
+                    capability_id,
+                    current_query,
+                    self._config,
+                    state.research_loop_count,
                     task=runtime_task,
-                    capability_id=capability_id,
-                    query=current_query,
                 )
-            )
+                runtime_task.attempt_count += 1
 
-            source_result, source_notices, source_answer, backend_label = dispatch_capability_search(
-                capability_id,
-                current_query,
-                self._config,
-                state.research_loop_count,
-                task=runtime_task,
-            )
-            runtime_task.attempt_count += 1
+                if source_result and source_result.get("results"):
+                    deferred_notices = []
+                    search_result = (
+                        source_result
+                        if search_result is None
+                        else self._merge_search_results(search_result, source_result)
+                    )
+                    if source_answer and not answer_text:
+                        answer_text = source_answer
+                elif search_result is None:
+                    search_result = source_result
+                    self._extend_unique_notices(deferred_notices, source_notices)
+                else:
+                    self._extend_unique_notices(deferred_notices, source_notices)
 
-            if source_result and source_result.get("results"):
-                deferred_notices = []
-                search_result = (
-                    source_result
-                    if search_result is None
-                    else self._merge_search_results(search_result, source_result)
+                runtime_task.search_backend = (
+                    str(search_result.get("backend") or backend_label) if search_result else backend_label
                 )
-                if source_answer and not answer_text:
-                    answer_text = source_answer
-            elif search_result is None:
-                search_result = source_result
-                self._extend_unique_notices(deferred_notices, source_notices)
-            else:
-                self._extend_unique_notices(deferred_notices, source_notices)
+                runtime_task.evidence_count = len((search_result or {}).get("results", []))
+                runtime_task.top_score = self._extract_top_score(search_result)
 
-            runtime_task.search_backend = (
-                str(search_result.get("backend") or backend_label) if search_result else backend_label
-            )
-            runtime_task.evidence_count = len((search_result or {}).get("results", []))
-            runtime_task.top_score = self._extract_top_score(search_result)
-
-            drained = drain_and_capture_tool_events()
-            yield from emit_many(drained)
-            yield from emit(
-                self._build_search_result_event(
-                    task=runtime_task,
-                    search_result=search_result,
-                    backend=backend_label,
-                    query=current_query,
+                drained = drain_and_capture_tool_events()
+                yield from emit_many(drained)
+                yield from emit(
+                    self._build_search_result_event(
+                        task=runtime_task,
+                        search_result=search_result,
+                        backend=backend_label,
+                        query=current_query,
+                        query_index=query_index,
+                        query_count=len(current_queries),
+                    )
                 )
-            )
+
+            runtime_task.latest_query = "; ".join(current_queries)
 
             gap_reason = self._evidence_policy.assess_evidence_gap(
-                current_query,
+                runtime_task.latest_query,
                 search_result,
                 capability_id,
             )
@@ -197,7 +214,7 @@ class ResearchTaskExecutor:
                 has_next_source=has_next_source,
             )
             runtime_task.evidence_gap_reason = gap_reason
-            if gap_reason is None:
+            if gap_reason is None and not has_next_source:
                 break
 
         if not search_result or not search_result.get("results"):
@@ -458,12 +475,16 @@ class ResearchTaskExecutor:
         search_result: dict[str, Any] | None,
         backend: str,
         query: str,
+        query_index: int | None = None,
+        query_count: int | None = None,
     ) -> dict[str, Any]:
         return {
             "type": "search_result",
             "task_id": task.id,
             "backend": backend,
             "query": query,
+            "query_index": query_index,
+            "query_count": query_count,
             "attempt_count": task.attempt_count,
             "evidence_count": task.evidence_count,
             "top_score": task.top_score,
@@ -504,6 +525,8 @@ class ResearchTaskExecutor:
         task: TodoItem,
         capability_id: str,
         query: str,
+        query_index: int | None = None,
+        query_count: int | None = None,
     ) -> dict[str, Any]:
         if capability_id == SEARCH_ACADEMIC_PAPERS_CAPABILITY:
             stage = "retrieving_academic"
@@ -520,6 +543,8 @@ class ResearchTaskExecutor:
             "stage": stage,
             "backend": capability_id,
             "query": query,
+            "query_index": query_index,
+            "query_count": query_count,
             "attempt": task.attempt_count + 1,
             "previous_backend": task.search_backend,
             "previous_evidence_count": task.evidence_count,
@@ -528,3 +553,17 @@ class ResearchTaskExecutor:
             "planned_capabilities": list(task.planned_capabilities),
             "current_capability": capability_id,
         }
+
+    @staticmethod
+    def _task_queries(task: TodoItem) -> list[str]:
+        values = list(task.queries or [])
+        if task.query:
+            values.append(task.query)
+
+        queries: list[str] = []
+        for value in values:
+            for part in str(value or "").split(";"):
+                query = " ".join(part.split()).strip()
+                if query and query not in queries:
+                    queries.append(query)
+        return queries[:4] or [str(task.query or "").strip()]

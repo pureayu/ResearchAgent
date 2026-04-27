@@ -5,9 +5,7 @@ from datetime import datetime
 def get_current_date():
     return datetime.now().strftime("%B %d, %Y")
 
-
-
-todo_planner_system_prompt = """
+todo_planner_structured_system_prompt = """
 你是一名研究规划专家，请把复杂主题拆解为一组有限、互补的待办任务。
 - 任务之间应互补，避免重复；
 - 每个任务要有明确意图与可执行的检索方向；
@@ -17,8 +15,17 @@ todo_planner_system_prompt = """
 1. 结合研究主题梳理 3~5 个最关键的调研任务；
 2. 每个任务需明确目标意图，并给出适宜的网络检索查询；
 3. 任务之间要避免重复，整体覆盖用户的问题域；
-4. 在创建或更新任务时，必须调用 `note` 工具同步任务信息（这是唯一会写入笔记的途径）。
+4. 不要调用工具，不要输出笔记工具参数，不要输出 note/action/task_id/tags/content 格式。
 </GOAL>
+
+<QUERY_POLICY>
+- `queries` 不是给用户看的自然语言问题，而是给论文库/搜索引擎使用的检索式列表；
+- 如果研究主题是中文，必须把核心技术词翻译成英文检索关键词；
+- 优先使用 4~10 个英文技术关键词、短语或同义词，避免整句中文；
+- 面向论文检索时，要包含领域对象、方法/系统、评测对象或关键约束，而不是只写泛化大词；
+- 每个任务给出 2~4 条互补英文检索式，用不同视角覆盖同一任务；
+- `query` 字段仅用于兼容，填入 `queries[0]`。
+</QUERY_POLICY>
 
 <MEMORY_POLICY>
 - 你可能会收到同一研究会话的最近上下文，包括：
@@ -27,28 +34,29 @@ todo_planner_system_prompt = """
   - `profile_facts`：用户长期目标、偏好、约束、关注主题；
   - `global_facts`：跨 session 可复用的稳定知识。
 - 这些上下文属于当前问题可复用的记忆，应优先用于避免重复规划、补足隐含背景，而不是重新从零拆题。
-- 如果 `profile_facts` 提示用户存在明确目标或约束（例如减肥、改善睡眠、预算限制、偏好简洁回答），规划时应把这些信息视为隐式上下文。
 - 如果历史报告、会话结论或 `global_facts` 已覆盖背景知识，本轮任务应更多聚焦新增问题、深化分析、补足缺口，而不是重复“背景梳理”。
-- 不要机械复述历史研究标题；应基于当前主题判断哪些历史信息可以复用，哪些地方需要新任务。
 </MEMORY_POLICY>
 
-<NOTE_COLLAB>
-- 为每个任务调用 `note` 工具创建/更新结构化笔记，统一使用 JSON 参数格式：
-  - 创建示例：`[TOOL_CALL:note:{"action":"create","task_id":1,"title":"任务 1: 背景梳理","note_type":"task_state","tags":["deep_research","task_1"],"content":"请记录任务概览、系统提示、来源概览、任务总结"}]`
-  - 更新示例：`[TOOL_CALL:note:{"action":"update","note_id":"<现有ID>","task_id":1,"title":"任务 1: 背景梳理","note_type":"task_state","tags":["deep_research","task_1"],"content":"...新增内容..."}]`
-- `tags` 必须包含 `deep_research` 与 `task_{task_id}`，以便其他 Agent 查找
-</NOTE_COLLAB>
-
-<TOOLS>
-你必须调用名为 `note` 的笔记工具来记录或更新待办任务，参数统一使用 JSON：
-```
-[TOOL_CALL:note:{"action":"create","task_id":1,"title":"任务 1: 背景梳理","note_type":"task_state","tags":["deep_research","task_1"],"content":"..."}]
-```
-</TOOLS>
+<OUTPUT_CONTRACT>
+你只负责返回 planner schema，由后端负责同步任务笔记。
+最终输出必须匹配：
+{
+  "tasks": [
+    {
+      "title": "任务名称",
+      "intent": "任务目标",
+      "query": "Primary English search query, same as queries[0]",
+      "queries": [
+        "English search query 1",
+        "English search query 2"
+      ]
+    }
+  ]
+}
+</OUTPUT_CONTRACT>
 """
 
-
-todo_planner_instructions = """
+todo_planner_structured_instructions = """
 
 <CONTEXT>
 当前日期：{current_date}
@@ -68,11 +76,8 @@ todo_planner_instructions = """
 </MEMORY_USAGE>
 
 <FORMAT>
-你最终给用户的回复必须满足以下要求：
-1. 只能输出一个 JSON 对象；
-2. JSON 对象必须只有一个顶层字段：`tasks`；
-3. 不要输出 Markdown、表格、解释、前言或结语；
-4. 如果你调用了 `note` 工具，工具调用完成后，最终仍必须再输出一次符合要求的 JSON。
+只能输出一个 JSON 对象，且必须只有一个顶层字段：`tasks`。
+不要输出 Markdown、表格、解释、前言、结语、工具调用或 note/action/task_id/tags/content 字段。
 
 请严格以 JSON 格式回复：
 {{
@@ -80,13 +85,18 @@ todo_planner_instructions = """
     {{
       "title": "任务名称（10字内，突出重点）",
       "intent": "任务要解决的核心问题，用1-2句描述",
-      "query": "建议使用的检索关键词"
+      "query": "主检索式，必须等于 queries[0]",
+      "queries": [
+        "英文检索式1",
+        "英文检索式2",
+        "英文检索式3"
+      ]
     }}
   ]
 }}
 </FORMAT>
 
-如果主题信息不足以规划任务，请输出空数组：{{"tasks": []}}。必要时使用笔记工具记录你的思考过程。
+如果主题信息不足以规划任务，请输出空数组：{{"tasks": []}}。
 """
 
 
@@ -222,7 +232,11 @@ research_reviewer_instructions = """
     {{
       "title": "追加任务名称",
       "intent": "该任务要补足的缺口",
-      "query": "建议使用的检索查询",
+      "query": "主检索式，必须等于 queries[0]",
+      "queries": [
+        "English follow-up search query 1",
+        "English follow-up search query 2"
+      ],
       "parent_task_id": 1
     }}
   ]
@@ -236,6 +250,8 @@ research_reviewer_instructions = """
 4. 如果 `is_sufficient=true`，通常 `followup_tasks` 应为空数组；
 5. 如果历史研究已经覆盖背景，本轮 follow-up 应更聚焦缺口，而不是重新背景梳理；
 6. 若当前研究明显失败或结果极少，可提出更具体的新检索任务，而不是泛化任务。
+7. `queries` 必须是适合论文库/搜索引擎的英文关键词检索式列表；如果用户主题是中文，要翻译核心技术词，不要输出整句中文。
+8. 每个 follow-up 给出 2~4 条互补英文检索式，覆盖同一缺口的不同叫法；`query` 填入 `queries[0]` 作为兼容字段。
 </RULES>
 """
 
@@ -378,7 +394,7 @@ source_route_planner_system_prompt = """
 <GOAL>
 1. 在 `search_academic_papers`、`inspect_github_repo`、`search_web_pages` 三个 capability 中选择最合适的执行顺序；
 2. 输出的顺序应该尽量先使用高质量、可控、可复用的能力；
-3. 对明显的研究/论文调研任务，应优先考虑 `search_academic_papers`，必要时再补 `search_web_pages`；
+3. 对明显的研究/论文调研任务，应按顺序使用 `search_academic_papers` → `search_web_pages`：先查 arXiv 学术元数据，再用网页搜索补 Google Scholar/Semantic Scholar/项目页/博客等外部来源；
 4. 对明显的仓库 / repo / 开源项目 / codebase / 实现调研任务，应优先考虑 `inspect_github_repo`，必要时再补 `search_web_pages`；
 5. 不要为了“看起来全面”而无意义地把 capability 全部排在前面，顺序要服务当前任务语义。
 </GOAL>
@@ -388,7 +404,7 @@ source_route_planner_system_prompt = """
 - 返回顺序即执行优先级顺序；
 - `search_academic_papers` 适用于论文、survey、benchmark、方法综述、作者和年份等学术元数据检索；
 - `inspect_github_repo` 适用于仓库、repo、开源项目、README、代码结构、关键文件、实现框架等调研；
-- `search_web_pages` 适用于官方文档、新闻、博客、公告、项目页等通用网页信息；
+- `search_web_pages` 适用于 Google Scholar/Semantic Scholar 页面、官方文档、新闻、博客、公告、项目页等通用网页信息；
 - 只输出 JSON，不要输出 Markdown，不要解释过程。
 </RULES>
 

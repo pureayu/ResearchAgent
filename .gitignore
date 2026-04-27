@@ -33,7 +33,9 @@ deepresearch/backend/paper_assistant/data/vector_store/
 deepresearch/backend/paper_assistant/data/rag_store/
 deepresearch/backend/paper_assistant/tmp_test_memory.py
 deepresearch/backend/src/data/
+deepresearch/backend/src/.codex
 deepresearch/backend/src/notes/
+deepresearch/backend/src/research_projects/
 deepresearch/backend/data/
 deepresearch/backend/benchmarks/*/results/*.json
 deepresearch/frontend/src/assets/research-agent-pixel.svg

@@ -10,9 +10,13 @@ from agent_runtime.interfaces import AgentLike
 from capability_types import (
     DEFAULT_CAPABILITY_CHAIN,
     INSPECT_GITHUB_REPO_CAPABILITY,
+    SEARCH_ACADEMIC_PAPERS_CAPABILITY,
+    SEARCH_WEB_PAGES_CAPABILITY,
     VALID_CAPABILITY_IDS,
 )
 from config import Configuration
+from llm.schemas import SourceRouteOutput
+from llm.structured import StructuredOutputRunner
 from models import TodoItem
 from prompts import get_current_date, source_route_planner_instructions
 from utils import strip_thinking_tokens
@@ -33,13 +37,21 @@ class SourceRoutePlan:
 class SourceRoutingService:
     """Ask a lightweight classifier to pick a capability order for a task."""
 
-    def __init__(self, routing_agent: AgentLike, config: Configuration) -> None:
+    def __init__(
+        self,
+        routing_agent: AgentLike | None,
+        config: Configuration,
+        *,
+        structured_router: StructuredOutputRunner[SourceRouteOutput] | None = None,
+    ) -> None:
         self._agent = routing_agent
         self._config = config
+        self._structured_router = structured_router
         self._allowed_capabilities = set(DEFAULT_CAPABILITY_CHAIN)
         if config.enable_github_mcp:
             self._allowed_capabilities.add(INSPECT_GITHUB_REPO_CAPABILITY)
 
+    #规定当前任务应该走哪些source
     def plan_capabilities(self, research_topic: str, task: TodoItem) -> SourceRoutePlan:
         """Return a capability order with a stable fallback on parse failures."""
 
@@ -50,6 +62,18 @@ class SourceRoutingService:
             task_intent=task.intent,
             task_query=task.query,
         )
+        if self._structured_router is not None:
+            try:
+                payload = self._structured_router.invoke(prompt)
+                parsed = self._from_structured_output(payload)
+                if parsed is not None:
+                    return parsed
+            except Exception:
+                logger.exception("Structured source router failed; falling back to legacy agent")
+
+        if self._agent is None:
+            return self._default_plan(reason="route_agent_unavailable")
+
         try:
             response = self._agent.run(prompt)
         except Exception:
@@ -99,10 +123,57 @@ class SourceRoutingService:
 
         return SourceRoutePlan(
             intent_label=intent_label,
-            preferred_capabilities=preferred_capabilities,
+            preferred_capabilities=self._normalize_capability_order(
+                preferred_capabilities,
+                intent_label=intent_label,
+            ),
             confidence=confidence,
             reason=reason,
         )
+
+    def _from_structured_output(
+        self,
+        payload: SourceRouteOutput,
+    ) -> SourceRoutePlan | None:
+        preferred_capabilities: list[str] = []
+        for item in payload.preferred_capabilities:
+            capability_id = str(item or "").strip()
+            if (
+                capability_id not in VALID_CAPABILITY_IDS
+                or capability_id not in self._allowed_capabilities
+                or capability_id in preferred_capabilities
+            ):
+                continue
+            preferred_capabilities.append(capability_id)
+
+        if not preferred_capabilities:
+            return None
+
+        return SourceRoutePlan(
+            intent_label=str(payload.intent_label or "other").strip() or "other",
+            preferred_capabilities=self._normalize_capability_order(
+                preferred_capabilities,
+                intent_label=str(payload.intent_label or "other").strip() or "other",
+            ),
+            confidence=self._clamp_confidence(payload.confidence),
+            reason=str(payload.reason or "").strip(),
+        )
+
+    @staticmethod
+    def _normalize_capability_order(
+        capabilities: list[str],
+        *,
+        intent_label: str,
+    ) -> list[str]:
+        """Keep ARIS-style academic-first external retrieval for research tasks."""
+
+        normalized = [capability for capability in capabilities if capability in VALID_CAPABILITY_IDS]
+        if intent_label in {"literature_review", "general_research"}:
+            ordered = [SEARCH_ACADEMIC_PAPERS_CAPABILITY, SEARCH_WEB_PAGES_CAPABILITY]
+            if INSPECT_GITHUB_REPO_CAPABILITY in normalized:
+                ordered.append(INSPECT_GITHUB_REPO_CAPABILITY)
+            return [capability for capability in ordered if capability in normalized or capability in DEFAULT_CAPABILITY_CHAIN]
+        return normalized
 
     @staticmethod
     def _extract_json_payload(text: str) -> dict | list | None:

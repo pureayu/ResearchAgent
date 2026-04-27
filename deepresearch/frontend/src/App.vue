@@ -19,40 +19,31 @@
           </div>
           <div>
             <h1>深度研究助手</h1>
-            <p>结合多轮智能检索与总结，实时呈现洞见与引用。</p>
+            <p>从研究方向出发，自动完成调研、idea 提炼、评审和实验计划。</p>
           </div>
         </header>
 
-        <form class="form" @submit.prevent="handleSubmit">
+        <form class="form" @submit.prevent="handleProjectSubmit">
           <label class="field">
-            <span>研究主题</span>
+            <span>研究方向</span>
             <textarea
-              v-model="form.topic"
-              placeholder="例如：探索多模态模型在 2025 年的关键突破"
-              rows="4"
+              v-model="projectForm.topic"
+              placeholder="例如：面向多模态模型的低成本评测与自动发现机制"
+              rows="3"
               required
             ></textarea>
           </label>
 
-          <section class="options">
-            <label class="field option">
-              <span>搜索引擎</span>
-              <select v-model="form.searchApi">
-                <option value="">沿用后端配置</option>
-                <option
-                  v-for="option in searchOptions"
-                  :key="option"
-                  :value="option"
-                >
-                  {{ option }}
-                </option>
-              </select>
+          <details class="advanced-options">
+            <summary>高级设置</summary>
+            <label class="field">
+              <span>项目 ID（可选）</span>
+              <input
+                v-model="projectForm.projectId"
+                placeholder="留空则由后端自动生成"
+              />
             </label>
-          </section>
-
-          <p v-if="currentSessionId" class="hint muted">
-            当前将继续同一研究会话
-          </p>
+          </details>
 
           <div class="form-actions">
             <button class="submit" type="submit" :disabled="loading">
@@ -65,16 +56,8 @@
                 >
                   <circle cx="12" cy="12" r="9" stroke-width="3" />
                 </svg>
-                {{ loading ? "研究进行中..." : currentSessionId ? "继续研究" : "开始研究" }}
+                {{ loading ? "研究进行中..." : "开始研究" }}
               </span>
-            </button>
-            <button
-              v-if="loading"
-              type="button"
-              class="secondary-btn"
-              @click="cancelResearch"
-            >
-              取消研究
             </button>
           </div>
         </form>
@@ -88,7 +71,7 @@
           {{ error }}
         </p>
         <p v-else-if="loading" class="hint muted">
-          正在收集线索与证据，实时进展见右侧区域。
+          正在推进完整研究流程，实时进展见右侧区域。
         </p>
       </section>
     </div>
@@ -104,28 +87,51 @@
             </svg>
             返回
           </button>
-          <h2>🔍 深度研究助手</h2>
+          <h2>深度研究助手</h2>
         </div>
 
         <div class="research-info">
           <div class="info-item">
-            <label>研究主题</label>
+            <label>研究方向</label>
             <p class="topic-display">{{ form.topic }}</p>
           </div>
 
-          <div class="info-item" v-if="form.searchApi">
+          <div class="info-item" v-if="appMode === 'deep_research' && form.searchApi">
             <label>搜索引擎</label>
             <p>{{ form.searchApi }}</p>
           </div>
 
-          <div class="info-item" v-if="currentSessionId">
+          <div class="info-item" v-if="appMode === 'deep_research' && currentSessionId">
             <label>会话标识</label>
             <p class="session-display" :title="currentSessionId">
               {{ currentSessionId }}
             </p>
           </div>
 
-          <div class="info-item" v-if="currentResponseMode">
+          <div class="info-item" v-if="appMode === 'project_workflow' && projectSnapshot">
+            <label>项目 ID</label>
+            <p class="session-display" :title="projectSnapshot.project_id">
+              {{ projectSnapshot.project_id }}
+            </p>
+          </div>
+
+          <div class="info-item" v-if="appMode === 'project_workflow' && projectWorkspacePath">
+            <label>工作区路径</label>
+            <p class="session-display" :title="projectWorkspacePath">
+              {{ projectWorkspacePath }}
+            </p>
+          </div>
+
+          <div class="info-item" v-if="appMode === 'project_workflow' && projectSnapshot">
+            <label>当前阶段</label>
+            <p>
+              <span class="mode-badge mode-project">
+                {{ projectStageLabel }}
+              </span>
+            </p>
+          </div>
+
+          <div class="info-item" v-if="appMode === 'deep_research' && currentResponseMode">
             <label>回答模式</label>
             <p>
               <span class="mode-badge" :class="`mode-${currentResponseMode}`">
@@ -134,7 +140,7 @@
             </p>
           </div>
 
-          <div class="info-item" v-if="totalTasks > 0">
+          <div class="info-item" v-if="appMode === 'deep_research' && totalTasks > 0">
             <label>研究进度</label>
             <div class="progress-bar">
               <div class="progress-fill" :style="{ width: `${(completedTasks / totalTasks) * 100}%` }"></div>
@@ -143,7 +149,7 @@
           </div>
         </div>
 
-        <div class="history-panel" v-if="conversationTurns.length">
+        <div class="history-panel" v-if="appMode === 'deep_research' && conversationTurns.length">
           <label>会话历史</label>
           <ul class="history-list">
             <li v-for="turn in conversationTurns" :key="turn.id" class="history-item">
@@ -173,14 +179,17 @@
               <span class="dot"></span>
               {{ loading ? loadingLabel : "研究流程完成" }}
             </div>
-            <span class="status-meta">
+            <span v-if="appMode === 'deep_research'" class="status-meta">
               任务进度：{{ completedTasks }} / {{ totalTasks || todoTasks.length || 1 }}
               · 阶段记录 {{ progressLogs.length }} 条
+            </span>
+            <span v-else class="status-meta">
+              当前阶段：{{ projectStageLabel }} · 记录 {{ progressLogs.length }} 条
             </span>
           </div>
           <div class="status-controls">
             <span
-              v-if="currentResponseMode"
+              v-if="appMode === 'deep_research' && currentResponseMode"
               class="mode-badge status-mode-badge"
               :class="`mode-${currentResponseMode}`"
             >
@@ -192,7 +201,7 @@
           </div>
         </header>
 
-        <section v-if="showResearchWorkflow" class="workflow-stepper">
+        <section v-if="appMode === 'deep_research' && showResearchWorkflow" class="workflow-stepper">
           <article
             v-for="stage in workflowStages"
             :key="stage.key"
@@ -212,7 +221,7 @@
           </article>
         </section>
 
-        <section v-else-if="currentResponseMode" class="mode-panel">
+        <section v-else-if="appMode === 'deep_research' && currentResponseMode" class="mode-panel">
           <span class="mode-badge" :class="`mode-${currentResponseMode}`">
             {{ responseModeLabel }}
           </span>
@@ -228,8 +237,203 @@
           </transition-group>
         </div>
 
+        <section v-if="appMode === 'project_workflow'" class="project-result">
+          <div
+            v-if="!projectSnapshot && !loading && !error"
+            class="empty-state"
+          >
+            <h3>等待研究开始</h3>
+            <p>输入研究方向后，这里会展示候选 idea、评审结果和实验计划。</p>
+          </div>
+
+          <section v-if="projectSnapshot" class="project-overview-card">
+            <div>
+              <p class="focus-kicker">研究工作区</p>
+              <h3>{{ projectSnapshot.status.topic }}</h3>
+              <p class="muted">阶段：{{ projectStageLabel }}</p>
+            </div>
+            <div class="task-chip-group">
+              <span class="task-label">ID：{{ projectSnapshot.project_id }}</span>
+              <span class="task-label path-chip" :title="projectWorkspacePath">
+                <span class="path-label">路径：</span>
+                <span class="path-text">{{ projectWorkspacePath }}</span>
+                <button
+                  class="chip-action"
+                  type="button"
+                  @click="copyNotePath(projectWorkspacePath)"
+                >
+                  复制
+                </button>
+              </span>
+            </div>
+          </section>
+
+          <details
+            v-if="projectReportMarkdown"
+            class="project-card report-block"
+            open
+          >
+            <summary class="detail-summary">
+              <div>
+                <h3>调研总结报告</h3>
+                <p>先给出 landscape，再从中拆出可继续深入的方向。</p>
+              </div>
+            </summary>
+            <div
+              class="block-markdown report-markdown"
+              v-html="renderMarkdown(projectReportMarkdown)"
+            ></div>
+          </details>
+
+          <section v-if="selectedProjectIdea" class="project-card selected-idea-card">
+            <div class="focus-head">
+              <div>
+                <p class="focus-kicker">{{ refinedProjectIdea ? "细化后的研究方向" : "选中方向" }}</p>
+                <h3>{{ selectedProjectIdea.title }}</h3>
+              </div>
+              <span class="task-status completed">
+                score {{ formatScore(selectedProjectIdea.score) }}
+              </span>
+            </div>
+            <div class="project-grid">
+              <article>
+                <span>问题</span>
+                <p>{{ selectedProjectIdea.problem }}</p>
+              </article>
+              <article>
+                <span>假设</span>
+                <p>{{ selectedProjectIdea.hypothesis }}</p>
+              </article>
+              <article>
+                <span>方法草图</span>
+                <p>{{ selectedProjectIdea.method_sketch }}</p>
+              </article>
+              <article v-if="selectedProjectIdea.minimum_viable_experiment">
+                <span>最小验证</span>
+                <p>{{ selectedProjectIdea.minimum_viable_experiment }}</p>
+              </article>
+              <article>
+                <span>预期信号</span>
+                <p>{{ selectedProjectIdea.expected_signal }}</p>
+              </article>
+              <article v-if="selectedProjectIdea.reviewer_objection">
+                <span>潜在质疑</span>
+                <p>{{ selectedProjectIdea.reviewer_objection }}</p>
+              </article>
+              <article v-if="selectedProjectIdea.required_experiments.length">
+                <span>验证计划</span>
+                <ul>
+                  <li v-for="item in selectedProjectIdea.required_experiments" :key="item">{{ item }}</li>
+                </ul>
+              </article>
+            </div>
+          </section>
+
+          <section v-if="projectCandidates.length" class="project-card">
+            <div class="task-header">
+              <div>
+                <h3>可继续深入的方向</h3>
+                <p class="muted">先选择一个方向，系统再进入外部评审和实验计划。</p>
+              </div>
+            </div>
+            <ul class="candidate-list">
+              <li
+                v-for="(candidate, index) in projectCandidates"
+                :key="`${candidate.title}-${index}`"
+                :class="{ active: selectedProjectIdea?.title === candidate.title }"
+              >
+                <div>
+                  <strong>{{ index + 1 }}. {{ candidate.title }}</strong>
+                  <p>{{ candidate.problem }}</p>
+                  <p v-if="candidate.method_sketch" class="muted">涉及方法：{{ candidate.method_sketch }}</p>
+                  <p v-if="candidate.minimum_viable_experiment" class="muted">最小验证：{{ candidate.minimum_viable_experiment }}</p>
+                  <p v-if="candidate.expected_signal" class="muted">判断信号：{{ candidate.expected_signal }}</p>
+                  <p v-if="candidate.reviewer_objection" class="muted">可能质疑：{{ candidate.reviewer_objection }}</p>
+                </div>
+                <div class="candidate-actions">
+                  <span class="task-label">
+                    {{ candidate.novelty_verdict }} · {{ formatScore(candidate.score) }}
+                  </span>
+                  <button
+                    class="secondary-btn"
+                    type="button"
+                    :disabled="loading || selectedProjectIdea?.title === candidate.title"
+                    @click="handleSelectProjectDirection(candidate, index)"
+                  >
+                    {{ selectedProjectIdea?.title === candidate.title ? "已选择" : "选择并深入" }}
+                  </button>
+                </div>
+              </li>
+            </ul>
+          </section>
+
+          <section v-if="projectReview" class="project-card">
+            <div class="task-header">
+              <div>
+                <h3>外部评审</h3>
+                <p class="muted">第 {{ projectReviewResult?.round }} 轮 · 状态 {{ projectReviewResult?.status }}</p>
+              </div>
+              <span class="mode-badge mode-project">{{ projectReview.verdict }}</span>
+            </div>
+            <p class="project-summary">{{ projectReview.summary || "评审未返回摘要" }}</p>
+            <div class="project-grid">
+              <article v-if="projectReview.strengths.length">
+                <span>优点</span>
+                <ul>
+                  <li v-for="item in projectReview.strengths" :key="item">{{ item }}</li>
+                </ul>
+              </article>
+              <article v-if="projectReview.weaknesses.length">
+                <span>问题</span>
+                <ul>
+                  <li v-for="item in projectReview.weaknesses" :key="item">{{ item }}</li>
+                </ul>
+              </article>
+              <article v-if="projectReview.action_items.length">
+                <span>下一步</span>
+                <ul>
+                  <li v-for="item in projectReview.action_items" :key="item">{{ item }}</li>
+                </ul>
+              </article>
+            </div>
+          </section>
+
+          <section v-if="projectNeedsRevision" class="project-card revision-card">
+            <div class="task-header">
+              <div>
+                <h3>待修订计划</h3>
+                <p class="muted">评审尚未通过，系统已在项目工作区生成 REVISION_PLAN.md 和 draft tracker。</p>
+              </div>
+              <span class="mode-badge mode-project">needs_revision</span>
+            </div>
+            <p class="project-summary">
+              先按 reviewer 的问题修订 novelty、可行性、baseline、统计协议和指标，再跑下一轮评审。
+              通过评审后才会生成正式实验 tracker。
+            </p>
+          </section>
+
+          <section v-if="projectExperimentTasks.length" class="project-card">
+            <div class="task-header">
+              <div>
+                <h3>实验 tracker</h3>
+                <p class="muted">评审通过后生成的正式可追踪实验计划，暂不自动执行实验。</p>
+              </div>
+            </div>
+            <ul class="experiment-list">
+              <li v-for="task in projectExperimentTasks" :key="task.id">
+                <div>
+                  <strong>{{ task.id }} · {{ task.title }}</strong>
+                  <p>{{ task.goal }}</p>
+                  <p class="muted">预期信号：{{ task.expected_signal || "TBD" }}</p>
+                </div>
+                <span class="task-status pending">{{ task.status }}</span>
+              </li>
+            </ul>
+          </section>
+        </section>
+
         <div
-          v-if="!todoTasks.length && !reportMarkdown && !progressLogs.length"
+          v-if="appMode === 'deep_research' && !todoTasks.length && !reportMarkdown && !progressLogs.length"
           class="empty-state"
         >
           <h3>{{ loading ? "正在初始化研究流程" : error ? "当前没有可展示的结果" : "等待研究开始" }}</h3>
@@ -244,7 +448,7 @@
           </p>
         </div>
 
-        <section v-if="currentTask" class="focus-card">
+        <section v-if="appMode === 'deep_research' && currentTask" class="focus-card">
           <div class="focus-head">
             <div>
               <p class="focus-kicker">当前研究焦点</p>
@@ -278,7 +482,7 @@
           </div>
         </section>
 
-        <div class="tasks-section" v-if="todoTasks.length && showResearchWorkflow">
+        <div class="tasks-section" v-if="appMode === 'deep_research' && todoTasks.length && showResearchWorkflow">
           <aside class="tasks-list">
             <div class="tasks-list-header">
               <h3>研究轮次</h3>
@@ -521,7 +725,7 @@
         </div>
 
         <details
-          v-if="reportMarkdown"
+          v-if="appMode === 'deep_research' && reportMarkdown"
           class="report-block"
           :class="{ 'block-highlight': reportHighlight }"
           :open="!loading"
@@ -538,7 +742,7 @@
           ></div>
         </details>
 
-        <form class="chat-composer" @submit.prevent="handleFollowUpSubmit">
+        <form v-if="appMode === 'deep_research'" class="chat-composer" @submit.prevent="handleFollowUpSubmit">
           <textarea
             v-model="composerInput"
             class="chat-input"
@@ -565,7 +769,19 @@
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 
 import {
+  createProject,
+  runDirectionRefinement,
+  runExternalReview,
+  runExperimentBridge,
+  runProjectIdeaDiscovery,
   runResearchStream,
+  updateProject,
+  type ExperimentBridgeResult,
+  type ExternalReviewResult,
+  type DirectionRefinementResult,
+  type IdeaCandidate,
+  type IdeaDiscoveryResult,
+  type ProjectSnapshot,
   type ResearchStreamEvent
 } from "./services/api";
 
@@ -660,6 +876,7 @@ interface TaskRoundView {
 }
 
 type ResponseMode = "memory_recall" | "direct_answer" | "deep_research";
+type AppMode = "deep_research" | "project_workflow";
 
 const SESSION_STORAGE_KEY = "deepresearch_session_id";
 const HISTORY_STORAGE_KEY = "deepresearch_conversation_turns";
@@ -669,6 +886,18 @@ const form = reactive({
   searchApi: ""
 });
 
+const projectForm = reactive({
+  projectId: "",
+  topic: "",
+  reportMarkdown: "",
+  runResearch: true,
+  useStructuredExtraction: true,
+  enableNoveltyCheck: false,
+  useExternalReview: true,
+  sanityFirst: true
+});
+
+const appMode = ref<AppMode>("project_workflow");
 const loading = ref(false);
 const error = ref("");
 const progressLogs = ref<string[]>([]);
@@ -684,6 +913,12 @@ const loadingLabel = ref("研究进行中");
 const todoTasks = ref<TodoTaskView[]>([]);
 const activeTaskId = ref<number | null>(null);
 const reportMarkdown = ref("");
+const projectSnapshot = ref<ProjectSnapshot | null>(null);
+const projectIdeaResult = ref<IdeaDiscoveryResult | null>(null);
+const projectRefinementResult = ref<DirectionRefinementResult | null>(null);
+const projectReviewResult = ref<ExternalReviewResult | null>(null);
+const projectExperimentResult = ref<ExperimentBridgeResult | null>(null);
+const projectRuntimeStage = ref("");
 
 const summaryHighlight = ref(false);
 const sourcesHighlight = ref(false);
@@ -778,6 +1013,36 @@ const responseModeDescription = computed(() => {
 const showResearchWorkflow = computed(
   () => !currentResponseMode.value || currentResponseMode.value === "deep_research"
 );
+const projectStageLabel = computed(() => {
+  if (projectRuntimeStage.value) {
+    return projectRuntimeStage.value;
+  }
+  const stage = projectSnapshot.value?.status.stage;
+  const labels: Record<string, string> = {
+    intake: "项目创建",
+    idea_discovery: "候选 idea",
+    human_gate: "人工选择",
+    refine_plan: "方案细化",
+    experiment_bridge: "实验计划",
+    run_experiment: "实验执行",
+    monitor_experiment: "实验监控",
+    auto_review: "外部评审",
+    paper_write: "论文写作",
+    done: "完成"
+  };
+  return stage ? labels[stage] ?? stage : "未开始";
+});
+const selectedProjectIdea = computed(() => projectIdeaResult.value?.selected_idea ?? null);
+const projectCandidates = computed(() => projectIdeaResult.value?.candidates ?? []);
+const refinedProjectIdea = computed(() => projectRefinementResult.value?.refined_idea ?? null);
+const projectReportMarkdown = computed(() => projectIdeaResult.value?.report_markdown ?? "");
+const projectReview = computed(() => projectReviewResult.value?.review ?? null);
+const projectExperimentTasks = computed(() => projectExperimentResult.value?.tasks ?? []);
+const projectWorkspacePath = computed(() => projectSnapshot.value?.root_path ?? "");
+const projectNeedsRevision = computed(() => {
+  const verdict = projectReview.value?.verdict;
+  return Boolean(verdict && verdict !== "positive");
+});
 const currentTaskOriginLabel = computed(() => {
   if (currentTask.value?.origin === "reviewer") {
     return "自动补充任务";
@@ -1173,6 +1438,18 @@ function resetWorkflowState() {
   reportHighlight.value = false;
   toolHighlight.value = false;
   traceHighlight.value = false;
+  logsCollapsed.value = false;
+}
+
+function resetProjectWorkflowState() {
+  projectSnapshot.value = null;
+  projectIdeaResult.value = null;
+  projectRefinementResult.value = null;
+  projectReviewResult.value = null;
+  projectExperimentResult.value = null;
+  projectRuntimeStage.value = "";
+  progressLogs.value = [];
+  error.value = "";
   logsCollapsed.value = false;
 }
 
@@ -1838,7 +2115,228 @@ const submitResearch = async (rawTopic: string) => {
 };
 
 const handleSubmit = async () => {
+  appMode.value = "deep_research";
   await submitResearch(form.topic);
+};
+
+const handleProjectSubmit = async () => {
+  const topic = projectForm.topic.trim();
+  const report = projectForm.reportMarkdown.trim();
+  if (!topic) {
+    error.value = "请输入项目主题";
+    return;
+  }
+  if (!report && !projectForm.runResearch) {
+    error.value = "请输入研究方向";
+    return;
+  }
+
+  if (currentController) {
+    currentController.abort();
+    currentController = null;
+  }
+
+  appMode.value = "project_workflow";
+  loading.value = true;
+  loadingLabel.value = "研究流程启动中";
+  resetWorkflowState();
+  resetProjectWorkflowState();
+  isExpanded.value = true;
+  form.topic = topic;
+  let ideaHeartbeat: ReturnType<typeof window.setInterval> | null = null;
+
+  try {
+    projectRuntimeStage.value = "项目创建";
+    progressLogs.value.push("创建研究项目工作区");
+    const created = await createProject({
+      project_id: projectForm.projectId.trim() || undefined,
+      topic
+    });
+    projectSnapshot.value = created;
+
+    progressLogs.value.push(
+      report ? "基于已有报告提炼候选 idea" : "自动调研并提炼候选 idea"
+    );
+    projectRuntimeStage.value = report ? "候选 idea 提炼" : "自动调研";
+    loadingLabel.value = report ? "提炼候选 idea" : "自动调研中";
+    if (!report && projectForm.runResearch) {
+      const startedAt = Date.now();
+      ideaHeartbeat = window.setInterval(() => {
+        const elapsedSeconds = Math.max(1, Math.round((Date.now() - startedAt) / 1000));
+        progressLogs.value.push(
+          `自动调研仍在进行，已运行 ${elapsedSeconds} 秒。后端正在检索、总结或生成候选 idea。`
+        );
+      }, 20000);
+    }
+    const ideaResult = await runProjectIdeaDiscovery(created.project_id, {
+      report_markdown: report || undefined,
+      run_research: projectForm.runResearch,
+      auto_select_top: false,
+      use_structured_extraction: projectForm.useStructuredExtraction,
+      use_project_graph: true,
+      enable_novelty_check: projectForm.enableNoveltyCheck
+    });
+    if (ideaHeartbeat) {
+      window.clearInterval(ideaHeartbeat);
+      ideaHeartbeat = null;
+    }
+    projectIdeaResult.value = ideaResult;
+    projectSnapshot.value = ideaResult.snapshot;
+    progressLogs.value.push("调研总结和方向地图已生成，请选择一个方向继续深入");
+    projectRuntimeStage.value = "等待选择方向";
+    loadingLabel.value = "等待选择方向";
+  } catch (err) {
+    if (ideaHeartbeat) {
+      window.clearInterval(ideaHeartbeat);
+      ideaHeartbeat = null;
+    }
+    error.value = err instanceof Error ? err.message : "研究流程请求失败";
+    progressLogs.value.push("研究流程失败，已停止");
+    projectRuntimeStage.value = "研究失败";
+    loadingLabel.value = "研究流程失败";
+  } finally {
+    if (ideaHeartbeat) {
+      window.clearInterval(ideaHeartbeat);
+    }
+    loading.value = false;
+  }
+};
+
+const handleSelectProjectDirection = async (candidate: IdeaCandidate, index: number) => {
+  if (!projectSnapshot.value || !projectIdeaResult.value) {
+    return;
+  }
+
+  loading.value = true;
+  error.value = "";
+  projectRefinementResult.value = null;
+  projectReviewResult.value = null;
+  projectExperimentResult.value = null;
+  projectRuntimeStage.value = "方向深入";
+  loadingLabel.value = "方向深入中";
+  progressLogs.value.push(`已选择方向 ${index + 1}：${candidate.title}`);
+
+  try {
+    const updated = await updateProject(projectSnapshot.value.project_id, {
+      selected_idea: candidate.title,
+      stage: "refine_plan",
+      active_tasks: [
+        "Review selected direction",
+        "Run external review",
+        "Generate experiment tracker"
+      ],
+      next_action: "Run external review for selected direction."
+    });
+    projectSnapshot.value = updated;
+    projectIdeaResult.value = {
+      ...projectIdeaResult.value,
+      selected_idea: candidate
+    };
+    progressLogs.value.push("后端已确认选中方向，开始细化为可评审研究问题");
+
+    projectRuntimeStage.value = "方向细化";
+    loadingLabel.value = "方向细化中";
+    const refinementResult = await runDirectionRefinement(updated.project_id);
+    projectRefinementResult.value = refinementResult;
+    projectSnapshot.value = refinementResult.snapshot;
+    const refinedCandidate = refinementResult.refined_idea;
+    projectIdeaResult.value = {
+      ...projectIdeaResult.value,
+      selected_idea: refinedCandidate,
+      candidates: projectIdeaResult.value.candidates.map((item, itemIndex) =>
+        itemIndex === index || item.title === candidate.title ? refinedCandidate : item
+      )
+    };
+    progressLogs.value.push("选中方向已细化，开始后续评审/计划生成");
+
+    let activeRefinementResult = refinementResult;
+    if (projectForm.useExternalReview) {
+      const maxReviewRounds = 4;
+      let accepted = false;
+      let relaxedBridge = false;
+      for (let round = 1; round <= maxReviewRounds; round += 1) {
+        progressLogs.value.push(`调用外部评审模型检查研究问题（第 ${round} 轮）`);
+        projectRuntimeStage.value = `外部评审 · 第 ${round} 轮`;
+        loadingLabel.value = "外部评审中";
+        const reviewResult = await runExternalReview(activeRefinementResult.project_id, {
+          use_external_model: true,
+          max_rounds: maxReviewRounds
+        });
+        projectReviewResult.value = reviewResult;
+        projectSnapshot.value = reviewResult.snapshot;
+
+        if (reviewResult.review.verdict === "positive") {
+          progressLogs.value.push(`第 ${round} 轮评审通过，进入正式实验计划生成`);
+          accepted = true;
+          break;
+        }
+
+        if (reviewResult.review.verdict === "reject") {
+          progressLogs.value.push("评审明确拒绝该方向，已停止自动修订");
+          projectRuntimeStage.value = "评审拒绝";
+          loadingLabel.value = "评审拒绝";
+          return;
+        }
+
+        if (reviewResult.status === "max_rounds_reached" || round >= maxReviewRounds) {
+          progressLogs.value.push("已达到最大评审轮次，按放宽门禁生成待修订实验计划");
+          projectRuntimeStage.value = "放宽门禁 · 生成实验计划";
+          loadingLabel.value = "生成实验计划中";
+          relaxedBridge = reviewResult.review.verdict === "needs_revision";
+          break;
+        }
+
+        progressLogs.value.push("评审要求修订，自动读取 REVISION_PLAN.md 并细化方案");
+        projectRuntimeStage.value = `自动修订 · 第 ${round + 1} 轮准备`;
+        loadingLabel.value = "自动修订中";
+        const revisedResult = await runDirectionRefinement(reviewResult.project_id);
+        activeRefinementResult = revisedResult;
+        projectRefinementResult.value = revisedResult;
+        projectSnapshot.value = revisedResult.snapshot;
+        const revisedCandidate = revisedResult.refined_idea;
+        projectIdeaResult.value = {
+          ...projectIdeaResult.value,
+          selected_idea: revisedCandidate,
+          candidates: projectIdeaResult.value.candidates.map((item, itemIndex) =>
+            itemIndex === index ||
+            item.title === candidate.title ||
+            item.title === activeRefinementResult.original_idea.title
+              ? revisedCandidate
+              : item
+          )
+        };
+      }
+
+      if (!accepted) {
+        if (!relaxedBridge) {
+          progressLogs.value.push("外部评审未通过，已保留修订计划");
+          projectRuntimeStage.value = "待修订";
+          loadingLabel.value = "等待修订";
+          return;
+        }
+        progressLogs.value.push("当前仍需修订，但已按调试模式继续进入实验 tracker");
+      }
+    }
+
+    progressLogs.value.push("生成 claim-driven 实验 tracker 和日志");
+    projectRuntimeStage.value = "实验计划";
+    loadingLabel.value = "生成实验计划";
+    const experimentResult = await runExperimentBridge(activeRefinementResult.project_id, {
+      sanity_first: projectForm.sanityFirst
+    });
+    projectExperimentResult.value = experimentResult;
+    projectSnapshot.value = experimentResult.snapshot;
+    progressLogs.value.push("方向深入完成");
+    projectRuntimeStage.value = "研究完成";
+    loadingLabel.value = "研究流程完成";
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "方向深入失败";
+    progressLogs.value.push("方向深入失败，已停止");
+    projectRuntimeStage.value = "研究失败";
+    loadingLabel.value = "研究失败";
+  } finally {
+    loading.value = false;
+  }
 };
 
 const handleFollowUpSubmit = async () => {
@@ -1870,6 +2368,7 @@ const startNewResearch = () => {
     cancelResearch();
   }
   resetWorkflowState();
+  resetProjectWorkflowState();
   currentSessionId.value = null;
   currentRunId.value = null;
   conversationTurns.value = [];
@@ -1877,6 +2376,9 @@ const startNewResearch = () => {
   isExpanded.value = false;
   form.topic = "";
   form.searchApi = "";
+  projectForm.topic = "";
+  projectForm.projectId = "";
+  projectForm.reportMarkdown = "";
 };
 
 onMounted(() => {
@@ -2154,6 +2656,72 @@ select:focus {
 .option {
   flex: 1;
   min-width: 140px;
+}
+
+.advanced-options {
+  border-radius: 16px;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  background: rgba(248, 250, 252, 0.74);
+  padding: 12px 14px;
+}
+
+.advanced-options summary {
+  cursor: pointer;
+  color: #64748b;
+  font-size: 13px;
+  font-weight: 700;
+  list-style: none;
+}
+
+.advanced-options summary::-webkit-details-marker {
+  display: none;
+}
+
+.advanced-options summary::after {
+  content: "展开";
+  float: right;
+  color: #2563eb;
+  font-size: 12px;
+}
+
+.advanced-options[open] {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.advanced-options[open] summary {
+  margin-bottom: 4px;
+}
+
+.advanced-options[open] summary::after {
+  content: "收起";
+}
+
+.project-options {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border-radius: 16px;
+  background: rgba(248, 250, 252, 0.82);
+  border: 1px solid rgba(148, 163, 184, 0.22);
+}
+
+.check-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #334155;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.check-row input {
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  flex-shrink: 0;
 }
 
 .form-actions {
@@ -3561,6 +4129,135 @@ select:focus {
   background: rgba(99, 102, 241, 0.12);
   color: #4338ca;
   border-color: rgba(99, 102, 241, 0.2);
+}
+
+.mode-project {
+  background: rgba(20, 184, 166, 0.12);
+  color: #0f766e;
+  border-color: rgba(20, 184, 166, 0.24);
+}
+
+.project-result {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.project-overview-card,
+.project-card {
+  padding: 20px 22px;
+  border-radius: 20px;
+  border: 1px solid rgba(20, 184, 166, 0.2);
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 18px 38px rgba(15, 23, 42, 0.07);
+}
+
+.project-overview-card {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  flex-wrap: wrap;
+  background:
+    linear-gradient(135deg, rgba(240, 253, 250, 0.96), rgba(239, 246, 255, 0.9)),
+    #ffffff;
+}
+
+.project-overview-card h3,
+.project-card h3 {
+  margin: 0;
+  color: #0f172a;
+}
+
+.selected-idea-card {
+  border-color: rgba(59, 130, 246, 0.24);
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.96), rgba(240, 249, 255, 0.92)),
+    #ffffff;
+}
+
+.project-grid {
+  margin-top: 16px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+.project-grid article {
+  padding: 14px;
+  border-radius: 16px;
+  background: rgba(248, 250, 252, 0.92);
+  border: 1px solid rgba(148, 163, 184, 0.18);
+}
+
+.project-grid span {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  color: #0f766e;
+}
+
+.project-grid p,
+.project-grid ul,
+.project-summary {
+  margin: 0;
+  color: #334155;
+  line-height: 1.7;
+  font-size: 14px;
+}
+
+.project-grid ul {
+  padding-left: 18px;
+}
+
+.candidate-list,
+.experiment-list {
+  list-style: none;
+  margin: 16px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.candidate-list li,
+.experiment-list li {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 14px;
+  border-radius: 16px;
+  background: rgba(248, 250, 252, 0.9);
+  border: 1px solid rgba(148, 163, 184, 0.18);
+}
+
+.candidate-list li.active {
+  border-color: rgba(20, 184, 166, 0.38);
+  background: rgba(240, 253, 250, 0.86);
+}
+
+.candidate-list strong,
+.experiment-list strong {
+  color: #0f172a;
+}
+
+.candidate-list p,
+.experiment-list p {
+  margin: 6px 0 0;
+  color: #64748b;
+  line-height: 1.6;
+  font-size: 13px;
+}
+
+.candidate-actions {
+  display: flex;
+  align-items: flex-end;
+  flex-direction: column;
+  gap: 10px;
+  flex-shrink: 0;
 }
 
 .status-mode-badge {

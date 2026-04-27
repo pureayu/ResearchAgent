@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from datetime import datetime, timezone
 from typing import Any
@@ -38,6 +39,7 @@ MEMORY_CANDIDATE_LIMIT = 8
 MEMORY_RESULT_LIMIT = 5
 PROFILE_EXTRACTION_LIMIT = 4
 SEMANTIC_EXTRACTION_LIMIT = 8
+logger = logging.getLogger(__name__)
 WORKING_MEMORY_RECENT_TURN_LIMIT = 3
 WORKING_MEMORY_HISTORY_LIMIT = 12
 
@@ -507,6 +509,97 @@ class BaseMemoryService:
                 return None
 
         return None
+
+
+class NoOpMemoryService(BaseMemoryService):
+    """Memory backend used when no persistent memory database is configured."""
+
+    def get_or_create_session(self, session_id: str | None, topic: str) -> str:
+        del topic
+        return session_id or uuid4().hex
+
+    def start_run(self, session_id: str, topic: str) -> str:
+        del session_id, topic
+        return uuid4().hex
+
+    def load_relevant_context(
+        self,
+        session_id: str | None,
+        topic: str,
+        *,
+        exclude_run_id: str | None = None,
+    ) -> dict[str, Any]:
+        del session_id, topic, exclude_run_id
+        return {
+            "working_memory_summary": "",
+            "recent_turns": [],
+            "profile_facts": [],
+            "global_facts": [],
+        }
+
+    def load_recent_task_logs(
+        self,
+        session_id: str | None,
+        *,
+        exclude_run_id: str | None = None,
+        limit: int = 5,
+    ) -> list[dict[str, Any]]:
+        del session_id, exclude_run_id, limit
+        return []
+
+    def save_task_log(self, run_id: str, task: TodoItem) -> None:
+        del run_id, task
+
+    def save_report_memory(self, run_id: str, state: SummaryState, report: str) -> None:
+        del run_id, state, report
+
+    def save_session_turn(self, state: SummaryState, assistant_response: str) -> None:
+        del state, assistant_response
+
+    def refresh_working_memory(self, session_id: str | None) -> dict[str, Any]:
+        del session_id
+        return {"working_memory_summary": "", "recent_turns": []}
+
+    def capture_profile_memory(
+        self,
+        run_id: str,
+        session_id: str,
+        topic: str,
+    ) -> None:
+        del run_id, session_id, topic
+
+    def consolidate_semantic_facts(
+        self,
+        run_id: str,
+        topic: str,
+        report: str,
+    ) -> None:
+        del run_id, topic, report
+
+    def save_semantic_facts(
+        self,
+        run_id: str,
+        topic: str,
+        facts: list[dict[str, Any]],
+        *,
+        session_id: str | None = None,
+        default_memory_scope: str | None = None,
+    ) -> None:
+        del run_id, topic, facts, session_id, default_memory_scope
+
+
+def create_memory_service(config: Configuration) -> BaseMemoryService:
+    """Return persistent memory when configured, otherwise safe no-op memory."""
+
+    if config.resolved_memory_database_url():
+        try:
+            return MemoryService(config)
+        except Exception as exc:
+            logger.warning(
+                "Persistent memory unavailable; falling back to no-op memory: %s",
+                exc,
+            )
+    return NoOpMemoryService(config)
 
 
 class MemoryService(BaseMemoryService):

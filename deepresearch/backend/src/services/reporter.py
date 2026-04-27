@@ -29,6 +29,7 @@ class ReportingService:
                 f"### 任务 {task.id}: {task.title}\n"
                 f"- 任务目标：{task.intent}\n"
                 f"- 检索查询：{task.query}\n"
+                f"- 多重检索：{'; '.join(task.queries or [task.query])}\n"
                 f"- 执行状态：{task.status}\n"
                 f"- 检索后端：{task.search_backend or 'unknown'}\n"
                 f"- 检索轮次：{task.attempt_count}\n"

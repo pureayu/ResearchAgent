@@ -31,9 +31,14 @@ class Configuration(BaseModel):
         description="Maximum number of planner-generated tasks to keep",
     )
     max_research_rounds: int = Field(
-        default=2,
+        default=3,
         title="Research Rounds",
         description="Maximum number of planner/reviewer research rounds per run",
+    )
+    max_parallel_research_tasks: int = Field(
+        default=3,
+        title="Parallel Research Tasks",
+        description="Maximum number of same-round deep-research tasks to execute in parallel",
     )
     local_llm: str = Field(
         default="llama3.2",
@@ -69,6 +74,11 @@ class Configuration(BaseModel):
         default="./notes",
         title="Notes Workspace",
         description="Directory for NoteTool to persist task notes",
+    )
+    project_workspace_root: str = Field(
+        default="./research_projects",
+        title="Project Workspace Root",
+        description="Directory for ARIS-style project state files and templates",
     )
     memory_database_url: Optional[str] = Field(
         default=None,
@@ -145,6 +155,26 @@ class Configuration(BaseModel):
         title="Embedding Base URL",
         description="Optional base URL for embedding requests",
     )
+    review_llm_provider: Optional[str] = Field(
+        default=None,
+        title="Review LLM Provider",
+        description="Optional provider override for the external reviewer model",
+    )
+    review_llm_model_id: Optional[str] = Field(
+        default=None,
+        title="Review LLM Model ID",
+        description="Optional model override for the external reviewer",
+    )
+    review_llm_api_key: Optional[str] = Field(
+        default=None,
+        title="Review LLM API Key",
+        description="Optional API key override for the external reviewer",
+    )
+    review_llm_base_url: Optional[str] = Field(
+        default=None,
+        title="Review LLM Base URL",
+        description="Optional base URL override for the external reviewer",
+    )
 
     @classmethod
     def from_env(cls, overrides: Optional[dict[str, Any]] = None) -> "Configuration":
@@ -168,11 +198,17 @@ class Configuration(BaseModel):
             "embedding_model": os.getenv("EMBEDDING_MODEL"),
             "embedding_api_key": os.getenv("EMBEDDING_API_KEY"),
             "embedding_base_url": os.getenv("EMBEDDING_BASE_URL"),
+            "review_llm_provider": os.getenv("REVIEW_LLM_PROVIDER"),
+            "review_llm_model_id": os.getenv("REVIEW_LLM_MODEL_ID")
+            or os.getenv("REVIEW_LLM_MODEL"),
+            "review_llm_api_key": os.getenv("REVIEW_LLM_API_KEY"),
+            "review_llm_base_url": os.getenv("REVIEW_LLM_BASE_URL"),
             "lmstudio_base_url": os.getenv("LMSTUDIO_BASE_URL"),
             "ollama_base_url": os.getenv("OLLAMA_BASE_URL"),
             "max_web_research_loops": os.getenv("MAX_WEB_RESEARCH_LOOPS"),
             "max_todo_items": os.getenv("MAX_TODO_ITEMS"),
             "max_research_rounds": os.getenv("MAX_RESEARCH_ROUNDS"),
+            "max_parallel_research_tasks": os.getenv("MAX_PARALLEL_RESEARCH_TASKS"),
             "fetch_full_page": os.getenv("FETCH_FULL_PAGE"),
             "strip_thinking_tokens": os.getenv("STRIP_THINKING_TOKENS"),
             "use_tool_calling": os.getenv("USE_TOOL_CALLING"),
@@ -185,6 +221,7 @@ class Configuration(BaseModel):
             ),
             "enable_notes": os.getenv("ENABLE_NOTES"),
             "notes_workspace": os.getenv("NOTES_WORKSPACE"),
+            "project_workspace_root": os.getenv("PROJECT_WORKSPACE_ROOT"),
             "memory_database_url": os.getenv("MEMORY_DATABASE_URL")
             or os.getenv("DATABASE_URL"),
             "task_log_retention_per_session": os.getenv(
@@ -231,3 +268,17 @@ class Configuration(BaseModel):
 
         database_url = (self.memory_database_url or "").strip()
         return database_url or None
+
+    def reviewer_config(self) -> "Configuration":
+        """Return a config with reviewer-specific LLM overrides applied."""
+
+        overrides: dict[str, Any] = {}
+        if self.review_llm_provider:
+            overrides["llm_provider"] = self.review_llm_provider
+        if self.review_llm_model_id:
+            overrides["llm_model_id"] = self.review_llm_model_id
+        if self.review_llm_api_key:
+            overrides["llm_api_key"] = self.review_llm_api_key
+        if self.review_llm_base_url:
+            overrides["llm_base_url"] = self.review_llm_base_url
+        return self.model_copy(update=overrides)

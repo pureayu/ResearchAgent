@@ -9,6 +9,8 @@ from typing import Any, Optional
 
 from agent_runtime.interfaces import AgentLike
 from config import Configuration
+from llm.schemas import ReviewerOutput
+from llm.structured import StructuredOutputRunner
 from models import SummaryState
 from prompts import get_current_date, research_reviewer_instructions
 from utils import strip_thinking_tokens
@@ -29,9 +31,16 @@ class ResearchReview:
 class ReviewerService:
     """Wraps the reviewer agent to decide whether more research is needed."""
 
-    def __init__(self, reviewer_agent: AgentLike, config: Configuration) -> None:
+    def __init__(
+        self,
+        reviewer_agent: AgentLike | None,
+        config: Configuration,
+        *,
+        structured_reviewer: StructuredOutputRunner[ReviewerOutput] | None = None,
+    ) -> None:
         self._agent = reviewer_agent
         self._config = config
+        self._structured_reviewer = structured_reviewer
 
     def review_progress(self, state: SummaryState, current_round: int) -> ResearchReview:
         """Review current task coverage and optionally propose follow-up tasks."""
@@ -43,6 +52,29 @@ class ReviewerService:
             recalled_context=self._format_recalled_context(state.recalled_context),
             tasks_snapshot=self._format_tasks_snapshot(state),
         )
+
+        if self._structured_reviewer is not None:
+            try:
+                payload = self._structured_reviewer.invoke(prompt)
+                verdict = self._from_structured_output(payload)
+                logger.info(
+                    "Reviewer structured verdict: sufficient=%s followups=%d confidence=%.2f gap=%s",
+                    verdict.is_sufficient,
+                    len(verdict.followup_tasks),
+                    verdict.confidence,
+                    verdict.overall_gap,
+                )
+                return verdict
+            except Exception:
+                logger.exception("Structured reviewer failed; falling back to legacy agent")
+
+        if self._agent is None:
+            return ResearchReview(
+                is_sufficient=True,
+                overall_gap="review_agent_unavailable",
+                confidence=0.0,
+                followup_tasks=[],
+            )
 
         response = self._agent.run(prompt)
         self._agent.clear_history()
@@ -57,6 +89,35 @@ class ReviewerService:
             verdict.overall_gap,
         )
         return verdict
+
+    @classmethod
+    def _from_structured_output(cls, payload: ReviewerOutput) -> ResearchReview:
+        """Convert a Pydantic schema into the legacy reviewer dataclass."""
+
+        parsed_followups: list[dict[str, Any]] = []
+        for item in payload.followup_tasks[:3]:
+            title = str(item.title or "").strip()
+            intent = str(item.intent or "").strip()
+            queries = cls._normalize_queries(item.queries, item.query)
+            query = queries[0] if queries else ""
+            if not (title and intent and query):
+                continue
+            parsed_followups.append(
+                {
+                    "title": title,
+                    "intent": intent,
+                    "query": query,
+                    "queries": queries,
+                    "parent_task_id": item.parent_task_id,
+                }
+            )
+
+        return ResearchReview(
+            is_sufficient=bool(payload.is_sufficient),
+            overall_gap=str(payload.overall_gap or "").strip(),
+            confidence=min(max(float(payload.confidence or 0.0), 0.0), 1.0),
+            followup_tasks=parsed_followups,
+        )
 
     def _format_tasks_snapshot(self, state: SummaryState) -> str:
         """Serialize current tasks into stable reviewer-facing text."""
@@ -76,6 +137,7 @@ class ReviewerService:
                 f"- 来源：{task.origin}\n"
                 f"- 目标：{task.intent}\n"
                 f"- 查询：{task.latest_query or task.query}\n"
+                f"- 多重查询：{'; '.join(task.queries or [task.query])}\n"
                 f"- 状态：{task.status}\n"
                 f"- 后端：{task.search_backend or 'unknown'}\n"
                 f"- 尝试次数：{task.attempt_count}\n"
@@ -158,7 +220,8 @@ class ReviewerService:
                     continue
                 title = str(item.get("title") or "").strip()
                 intent = str(item.get("intent") or "").strip()
-                query = str(item.get("query") or "").strip()
+                queries = self._normalize_queries(item.get("queries"), item.get("query"))
+                query = queries[0] if queries else ""
                 if not (title and intent and query):
                     continue
                 parent_task_id: int | None = None
@@ -172,6 +235,7 @@ class ReviewerService:
                         "title": title,
                         "intent": intent,
                         "query": query,
+                        "queries": queries,
                         "parent_task_id": parent_task_id,
                     }
                 )
@@ -200,6 +264,23 @@ class ReviewerService:
             confidence=confidence,
             followup_tasks=parsed_followups,
         )
+
+    @staticmethod
+    def _normalize_queries(raw_queries: Any, raw_query: Any) -> list[str]:
+        values: list[str] = []
+        if isinstance(raw_queries, list):
+            values.extend(str(query or "") for query in raw_queries)
+        legacy_query = str(raw_query or "").strip()
+        if legacy_query:
+            values.append(legacy_query)
+
+        normalized: list[str] = []
+        for value in values:
+            for part in str(value or "").split(";"):
+                query = " ".join(part.split()).strip()
+                if query and query not in normalized:
+                    normalized.append(query)
+        return normalized[:4]
 
     def _extract_json_payload(self, text: str) -> dict[str, Any] | list | None:
         """Best-effort extraction of a JSON object or array from model output."""

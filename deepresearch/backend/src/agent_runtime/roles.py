@@ -13,7 +13,7 @@ from prompts import (
     response_mode_classifier_instructions,
     source_route_planner_system_prompt,
     task_summarizer_instructions,
-    todo_planner_system_prompt,
+    todo_planner_structured_system_prompt,
 )
 
 
@@ -44,7 +44,7 @@ ROLE_SPECS: dict[str, AgentSpec] = {
     PLANNER_ROLE: AgentSpec(
         role_id=PLANNER_ROLE,
         display_name="研究规划专家",
-        system_prompt=todo_planner_system_prompt.strip(),
+        system_prompt=todo_planner_structured_system_prompt.strip(),
     ),
     REPORTER_ROLE: AgentSpec(
         role_id=REPORTER_ROLE,

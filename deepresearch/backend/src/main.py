@@ -13,7 +13,19 @@ from loguru import logger
 from pydantic import BaseModel, Field
 
 from config import Configuration, SearchAPI
-from agent import DeepResearchAgent
+from project_workspace import (
+    DirectionRefinementResult,
+    DirectionRefinementService,
+    ExperimentBridgeResult,
+    ExperimentBridgeService,
+    ExternalReviewResult,
+    ExternalReviewService,
+    IdeaDiscoveryResult,
+    ProjectIdeaDiscoveryService,
+    ProjectSnapshot,
+    ProjectWorkspaceService,
+)
+from project_workspace.models import ProjectStage
 
 # 添加控制台日志处理程序
 logger.add(
@@ -55,6 +67,99 @@ class ResearchResponse(BaseModel):
     )
 
 
+class ProjectCreateRequest(BaseModel):
+    """Payload for creating a durable research project workspace."""
+
+    project_id: str | None = Field(
+        default=None,
+        description="Optional stable project identifier; generated from topic when omitted",
+    )
+    topic: str = Field(..., description="Research project topic")
+    selected_idea: str | None = Field(
+        default=None,
+        description="Optional active idea to seed docs/research_contract.md",
+    )
+
+
+class ProjectStatusPatch(BaseModel):
+    """Allowed project status updates from the UI or automation layer."""
+
+    stage: ProjectStage | None = None
+    selected_idea: str | None = None
+    baseline: str | None = None
+    current_branch: str | None = None
+    training_status: str | None = None
+    active_tasks: list[str] | None = None
+    next_action: str | None = None
+
+
+class IdeaDiscoveryRequest(BaseModel):
+    """Payload for running project-level idea discovery."""
+
+    report_markdown: str | None = Field(
+        default=None,
+        description="Optional precomputed discovery report; avoids invoking the research agent",
+    )
+    run_research: bool = Field(
+        default=False,
+        description="When true, invoke DeepResearchAgent for the project topic",
+    )
+    auto_select_top: bool = Field(
+        default=True,
+        description="Select the top extracted candidate and refresh contract/plan files",
+    )
+    use_structured_extraction: bool = Field(
+        default=True,
+        description="Use LangChain structured output for candidate extraction when available",
+    )
+    use_project_graph: bool = Field(
+        default=True,
+        description="Route the workflow through the project-level LangGraph when available",
+    )
+    enable_novelty_check: bool = Field(
+        default=False,
+        description="Annotate candidates with initial novelty-check fields",
+    )
+    selected_candidate_title: str | None = Field(
+        default=None,
+        description="Optional exact candidate title to select at the idea gate",
+    )
+    selected_candidate_index: int | None = Field(
+        default=None,
+        description="Optional 1-based candidate index to select at the idea gate",
+    )
+
+
+class ExternalReviewRequest(BaseModel):
+    """Payload for appending one external review round."""
+
+    review_text: str | None = Field(
+        default=None,
+        description="Optional externally produced raw review text",
+    )
+    verdict: str | None = Field(
+        default=None,
+        description="Optional verdict: positive, needs_revision, reject, unclear",
+    )
+    max_rounds: int = Field(
+        default=4,
+        description="Maximum review rounds before marking max_rounds_reached",
+    )
+    use_external_model: bool = Field(
+        default=True,
+        description="When review_text is omitted, use the configured LangChain model as reviewer",
+    )
+
+
+class ExperimentBridgeRequest(BaseModel):
+    """Payload for generating experiment bridge tasks."""
+
+    sanity_first: bool = Field(
+        default=True,
+        description="Prepend a small sanity-check task before full experiments",
+    )
+
+
 def _mask_secret(value: Optional[str], visible: int = 4) -> str:
     """Mask sensitive tokens while keeping leading and trailing characters."""
     if not value:
@@ -73,6 +178,111 @@ def _build_config(payload: ResearchRequest) -> Configuration:
         overrides["search_api"] = payload.search_api
 
     return Configuration.from_env(overrides=overrides)
+
+
+def _project_workspace(config: Configuration | None = None) -> ProjectWorkspaceService:
+    config = config or Configuration.from_env()
+    return ProjectWorkspaceService(config.project_workspace_root)
+
+
+def _build_agent(config: Configuration):
+    """Import the research agent lazily so project APIs do not require LLM deps."""
+
+    from agent import DeepResearchAgent
+
+    return DeepResearchAgent(config=config)
+
+
+def _build_candidate_extractor(config: Configuration):
+    """Best-effort structured idea extractor construction."""
+
+    try:
+        from project_workspace.structured_idea_extractor import (
+            build_structured_idea_extractor,
+        )
+
+        return build_structured_idea_extractor(config)
+    except ModuleNotFoundError as exc:
+        logger.warning(
+            "Structured idea extractor dependency missing ({}); using deterministic fallback",
+            exc.name,
+        )
+        return None
+    except Exception as exc:
+        logger.warning(
+            "Structured idea extractor unavailable ({}); using deterministic fallback",
+            exc,
+        )
+        return None
+
+
+def _build_novelty_checker(config: Configuration):
+    """Best-effort structured novelty checker construction."""
+
+    try:
+        from project_workspace.structured_novelty_checker import (
+            build_structured_novelty_checker,
+        )
+
+        return build_structured_novelty_checker(config)
+    except ModuleNotFoundError as exc:
+        logger.warning(
+            "Structured novelty checker dependency missing ({}); using unclear fallback",
+            exc.name,
+        )
+        return None
+    except Exception as exc:
+        logger.warning(
+            "Structured novelty checker unavailable ({}); using unclear fallback",
+            exc,
+        )
+        return None
+
+
+def _build_external_reviewer(config: Configuration):
+    """Best-effort external reviewer construction."""
+
+    try:
+        from project_workspace.structured_external_reviewer import (
+            build_structured_external_reviewer,
+        )
+
+        return build_structured_external_reviewer(config)
+    except ModuleNotFoundError as exc:
+        logger.warning(
+            "External reviewer dependency missing ({}); using review fallback",
+            exc.name,
+        )
+        return None
+    except Exception as exc:
+        logger.warning(
+            "External reviewer unavailable ({}); using review fallback",
+            exc,
+        )
+    return None
+
+
+def _build_direction_refiner(config: Configuration):
+    """Best-effort selected-direction refiner construction."""
+
+    try:
+        from project_workspace.direction_refinement import (
+            build_structured_direction_refiner,
+        )
+    except ImportError as exc:
+        logger.warning(
+            "Direction refiner dependency missing ({}); using fallback refinement",
+            exc,
+        )
+        return None
+    try:
+        return build_structured_direction_refiner(config)
+    except Exception as exc:
+        logger.warning(
+            "Direction refiner unavailable ({}); using fallback refinement",
+            exc,
+        )
+    return None
 
 
 def create_app() -> FastAPI:
@@ -117,11 +327,158 @@ def create_app() -> FastAPI:
     def health_check() -> Dict[str, str]:
         return {"status": "ok"}
 
+    @app.post("/projects", response_model=ProjectSnapshot)
+    def create_project(payload: ProjectCreateRequest) -> ProjectSnapshot:
+        try:
+            return _project_workspace().create_project(
+                project_id=payload.project_id,
+                topic=payload.topic,
+                selected_idea=payload.selected_idea,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.get("/projects/{project_id}", response_model=ProjectSnapshot)
+    def get_project(project_id: str) -> ProjectSnapshot:
+        try:
+            return _project_workspace().snapshot(project_id)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.patch("/projects/{project_id}", response_model=ProjectSnapshot)
+    def update_project(project_id: str, payload: ProjectStatusPatch) -> ProjectSnapshot:
+        try:
+            return _project_workspace().update_status(
+                project_id,
+                payload.model_dump(exclude_unset=True),
+            )
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/projects/{project_id}/idea-discovery", response_model=IdeaDiscoveryResult)
+    def run_project_idea_discovery(
+        project_id: str,
+        payload: IdeaDiscoveryRequest,
+    ) -> IdeaDiscoveryResult:
+        workspace = _project_workspace()
+
+        try:
+            research_runner = None
+            candidate_extractor = None
+            novelty_checker = None
+            config = Configuration.from_env()
+            if payload.run_research:
+                status = workspace.load_status(project_id)
+
+                def research_runner(topic: str) -> str:
+                    result = _build_agent(config).run(topic, session_id=status.project_id)
+                    return result.report_markdown or result.running_summary or ""
+
+            if payload.use_structured_extraction:
+                candidate_extractor = _build_candidate_extractor(config)
+            if payload.enable_novelty_check:
+                novelty_checker = _build_novelty_checker(config)
+
+            if payload.use_project_graph:
+                try:
+                    from project_workspace.project_graph import ProjectIdeaDiscoveryGraph
+
+                    return ProjectIdeaDiscoveryGraph(
+                        workspace,
+                        research_runner=research_runner,
+                        candidate_extractor=candidate_extractor,
+                        novelty_checker=novelty_checker,
+                    ).run(
+                        project_id,
+                        report_markdown=payload.report_markdown,
+                        auto_select_top=payload.auto_select_top,
+                        enable_novelty_check=payload.enable_novelty_check,
+                        selected_candidate_title=payload.selected_candidate_title,
+                        selected_candidate_index=payload.selected_candidate_index,
+                    )
+                except ModuleNotFoundError as exc:
+                    if exc.name != "langgraph":
+                        raise
+                    logger.warning("LangGraph unavailable; using service fallback")
+
+            return ProjectIdeaDiscoveryService(
+                workspace,
+                research_runner=research_runner,
+                candidate_extractor=candidate_extractor,
+                novelty_checker=novelty_checker,
+            ).run(
+                project_id,
+                report_markdown=payload.report_markdown,
+                auto_select_top=payload.auto_select_top,
+                enable_novelty_check=payload.enable_novelty_check,
+                selected_candidate_title=payload.selected_candidate_title,
+                selected_candidate_index=payload.selected_candidate_index,
+            )
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/projects/{project_id}/external-review", response_model=ExternalReviewResult)
+    def run_external_review(
+        project_id: str,
+        payload: ExternalReviewRequest,
+    ) -> ExternalReviewResult:
+        try:
+            reviewer = None
+            if payload.use_external_model and not payload.review_text:
+                reviewer = _build_external_reviewer(Configuration.from_env().reviewer_config())
+            return ExternalReviewService(
+                _project_workspace(),
+                reviewer=reviewer,
+            ).run(
+                project_id,
+                review_text=payload.review_text,
+                verdict=payload.verdict,
+                max_rounds=payload.max_rounds,
+            )
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/projects/{project_id}/direction-refine", response_model=DirectionRefinementResult)
+    def refine_project_direction(project_id: str) -> DirectionRefinementResult:
+        try:
+            refiner = _build_direction_refiner(Configuration.from_env())
+            return DirectionRefinementService(
+                _project_workspace(),
+                refiner=refiner,
+            ).run(project_id)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/projects/{project_id}/experiment-bridge", response_model=ExperimentBridgeResult)
+    def run_experiment_bridge(
+        project_id: str,
+        payload: ExperimentBridgeRequest,
+    ) -> ExperimentBridgeResult:
+        try:
+            return ExperimentBridgeService(_project_workspace()).run(
+                project_id,
+                sanity_first=payload.sanity_first,
+            )
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     @app.post("/research", response_model=ResearchResponse)
     def run_research(payload: ResearchRequest) -> ResearchResponse:
         try:
             config = _build_config(payload)
-            agent = DeepResearchAgent(config=config)
+            agent = _build_agent(config)
             result = agent.run(payload.topic, session_id = payload.session_id)
         except ValueError as exc:  # Likely due to unsupported configuration
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -134,6 +491,7 @@ def create_app() -> FastAPI:
                 "title": item.title,
                 "intent": item.intent,
                 "query": item.query,
+                "queries": list(item.queries or [item.query]),
                 "round_id": item.round_id,
                 "origin": item.origin,
                 "parent_task_id": item.parent_task_id,
@@ -161,7 +519,7 @@ def create_app() -> FastAPI:
     def stream_research(payload: ResearchRequest) -> StreamingResponse:
         try:
             config = _build_config(payload)
-            agent = DeepResearchAgent(config=config)
+            agent = _build_agent(config)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 

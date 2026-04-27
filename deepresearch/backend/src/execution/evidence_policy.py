@@ -79,6 +79,8 @@ class EvidencePolicy:
             return None
 
         if current_capability == SEARCH_WEB_PAGES_CAPABILITY:
+            if source_breakdown.get("web_search", 0) == 0 and source_breakdown.get("academic", 0) >= 3:
+                return None
             if len(results) < 3:
                 return "insufficient_web_coverage"
             if top_score < 0.45:

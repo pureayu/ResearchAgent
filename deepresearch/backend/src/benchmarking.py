@@ -63,6 +63,7 @@ def serialize_todo_item(task: TodoItem) -> dict[str, Any]:
         "title": task.title,
         "intent": task.intent,
         "query": task.query,
+        "queries": list(task.queries or [task.query]),
         "round_id": task.round_id,
         "origin": task.origin,
         "parent_task_id": task.parent_task_id,
