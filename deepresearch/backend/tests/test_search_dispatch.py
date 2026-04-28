@@ -9,7 +9,6 @@ if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
 from capability_types import (
-    INSPECT_GITHUB_REPO_CAPABILITY,
     SEARCH_ACADEMIC_PAPERS_CAPABILITY,
     SEARCH_WEB_PAGES_CAPABILITY,
 )
@@ -66,12 +65,6 @@ class SearchDispatchTests(unittest.TestCase):
         self.assertIsNone(answer)
         self.assertEqual(payload["results"][0]["source_type"], "academic")
 
-    def test_registry_exposes_github_capability_when_enabled(self) -> None:
-        registry = CapabilityRegistry(Configuration(enable_github_mcp=True))
-        spec = registry.require(INSPECT_GITHUB_REPO_CAPABILITY)
-        self.assertEqual(spec.backing_source_id, "github_mcp")
-        self.assertEqual(spec.source_type, "github")
-
     def test_executor_uses_registered_backing_source(self) -> None:
         executor = CapabilityExecutor(CapabilityRegistry())
         with patch(
@@ -98,30 +91,6 @@ class SearchDispatchTests(unittest.TestCase):
         self.assertEqual(notices, [])
         self.assertIsNone(answer)
         self.assertEqual(payload["results"][0]["source_type"], "web_search")
-
-    def test_executor_uses_github_handler(self) -> None:
-        executor = CapabilityExecutor(CapabilityRegistry(Configuration(enable_github_mcp=True)))
-        with patch(
-            "services.capabilities.GitHubRepoCapabilityHandler.execute",
-            return_value={
-                "results": [{"title": "repo", "url": "https://github.com/o/r", "source_type": "github"}],
-                "backend": "github_mcp",
-                "answer": None,
-                "notices": [],
-            },
-        ) as handler_execute:
-            payload, notices, answer, backend = executor.execute(
-                INSPECT_GITHUB_REPO_CAPABILITY,
-                "openai/openai-python",
-                Configuration(enable_github_mcp=True),
-                0,
-            )
-
-        handler_execute.assert_called_once()
-        self.assertEqual(backend, "github_mcp")
-        self.assertEqual(notices, [])
-        self.assertIsNone(answer)
-        self.assertEqual(payload["results"][0]["source_type"], "github")
 
 
 if __name__ == "__main__":

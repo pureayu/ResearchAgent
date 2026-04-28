@@ -7,8 +7,8 @@ SRC_ROOT = Path(__file__).resolve().parents[1] / "src"
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
+from capability_types import DEFAULT_CAPABILITY_CHAIN
 from config import Configuration
-from capability_types import DEFAULT_CAPABILITY_CHAIN, INSPECT_GITHUB_REPO_CAPABILITY
 from models import TodoItem
 from services.source_routing import SourceRoutingService
 
@@ -109,19 +109,19 @@ class SourceRoutingServiceTests(unittest.TestCase):
         self.assertEqual(plan.preferred_capabilities, DEFAULT_CAPABILITY_CHAIN)
         self.assertEqual(plan.reason, "route_agent_failed")
 
-    def test_plan_capabilities_accepts_github_when_enabled(self) -> None:
+    def test_plan_capabilities_drops_unknown_capabilities(self) -> None:
         service = SourceRoutingService(
             StubAgent(
                 """
                 {
                   "intent_label": "implementation_investigation",
-                  "preferred_capabilities": ["inspect_github_repo", "search_web_pages"],
+                  "preferred_capabilities": ["inspect_repo", "search_web_pages"],
                   "confidence": 0.88,
-                  "reason": "仓库调研优先 GitHub"
+                  "reason": "仓库调研"
                 }
                 """
             ),
-            Configuration(strip_thinking_tokens=False, enable_github_mcp=True),
+            Configuration(strip_thinking_tokens=False),
         )
 
         plan = service.plan_capabilities(
@@ -131,7 +131,7 @@ class SourceRoutingServiceTests(unittest.TestCase):
 
         self.assertEqual(
             plan.preferred_capabilities,
-            [INSPECT_GITHUB_REPO_CAPABILITY, "search_web_pages"],
+            ["search_web_pages"],
         )
 
 

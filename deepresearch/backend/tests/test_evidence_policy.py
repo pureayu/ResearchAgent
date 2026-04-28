@@ -8,7 +8,6 @@ if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
 from capability_types import (
-    INSPECT_GITHUB_REPO_CAPABILITY,
     SEARCH_ACADEMIC_PAPERS_CAPABILITY,
     SEARCH_WEB_PAGES_CAPABILITY,
 )
@@ -48,32 +47,6 @@ class EvidencePolicyTests(unittest.TestCase):
         self.assertEqual(
             self.policy.finalize_gap_reason(gap, has_next_source=False),
             "terminal_insufficient_evidence",
-        )
-
-    def test_github_missing_code_context_upgrades(self) -> None:
-        result = {
-            "results": [
-                {"title": "repo", "score": 1.0, "source_type": "github", "result_kind": "repo"},
-                {"title": "readme", "score": 0.9, "source_type": "github", "result_kind": "readme"},
-            ]
-        }
-
-        self.assertEqual(
-            self.policy.assess_evidence_gap("query", result, INSPECT_GITHUB_REPO_CAPABILITY),
-            "missing_code_context",
-        )
-
-    def test_github_enough_stops(self) -> None:
-        result = {
-            "results": [
-                {"title": "repo", "score": 1.0, "source_type": "github", "result_kind": "repo"},
-                {"title": "readme", "score": 0.9, "source_type": "github", "result_kind": "readme"},
-                {"title": "file", "score": 0.8, "source_type": "github", "result_kind": "file"},
-            ]
-        }
-
-        self.assertIsNone(
-            self.policy.assess_evidence_gap("query", result, INSPECT_GITHUB_REPO_CAPABILITY)
         )
 
 

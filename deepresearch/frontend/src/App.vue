@@ -1881,8 +1881,6 @@ const submitResearch = async (rawTopic: string) => {
               ? "本地检索"
               : stage === "retrieving_academic"
               ? "学术检索"
-              : stage === "retrieving_github"
-              ? "GitHub 检索"
               : stage === "retrieving_web"
               ? "联网检索"
               : stage;

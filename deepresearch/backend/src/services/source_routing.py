@@ -9,7 +9,6 @@ from dataclasses import dataclass
 from agent_runtime.interfaces import AgentLike
 from capability_types import (
     DEFAULT_CAPABILITY_CHAIN,
-    INSPECT_GITHUB_REPO_CAPABILITY,
     SEARCH_ACADEMIC_PAPERS_CAPABILITY,
     SEARCH_WEB_PAGES_CAPABILITY,
     VALID_CAPABILITY_IDS,
@@ -48,8 +47,6 @@ class SourceRoutingService:
         self._config = config
         self._structured_router = structured_router
         self._allowed_capabilities = set(DEFAULT_CAPABILITY_CHAIN)
-        if config.enable_github_mcp:
-            self._allowed_capabilities.add(INSPECT_GITHUB_REPO_CAPABILITY)
 
     #规定当前任务应该走哪些source
     def plan_capabilities(self, research_topic: str, task: TodoItem) -> SourceRoutePlan:
@@ -170,8 +167,6 @@ class SourceRoutingService:
         normalized = [capability for capability in capabilities if capability in VALID_CAPABILITY_IDS]
         if intent_label in {"literature_review", "general_research"}:
             ordered = [SEARCH_ACADEMIC_PAPERS_CAPABILITY, SEARCH_WEB_PAGES_CAPABILITY]
-            if INSPECT_GITHUB_REPO_CAPABILITY in normalized:
-                ordered.append(INSPECT_GITHUB_REPO_CAPABILITY)
             return [capability for capability in ordered if capability in normalized or capability in DEFAULT_CAPABILITY_CHAIN]
         return normalized
 

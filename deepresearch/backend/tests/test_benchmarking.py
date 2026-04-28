@@ -17,10 +17,10 @@ from benchmarking import (
 
 class BenchmarkingTest(unittest.TestCase):
     def test_extract_source_types_from_summary(self) -> None:
-        summary = "来源类型统计：\n- 学术论文：2\n- GitHub 仓库：1"
+        summary = "来源类型统计：\n- 学术论文：2\n- 联网网页：1"
         self.assertEqual(
             extract_source_types_from_summary(summary),
-            ["academic", "github"],
+            ["academic", "web_search"],
         )
 
     def test_aggregate_todo_items_collects_route_and_sources(self) -> None:

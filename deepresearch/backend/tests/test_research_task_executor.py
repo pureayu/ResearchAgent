@@ -9,7 +9,6 @@ if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
 from capability_types import (
-    INSPECT_GITHUB_REPO_CAPABILITY,
     SEARCH_ACADEMIC_PAPERS_CAPABILITY,
     SEARCH_WEB_PAGES_CAPABILITY,
 )
@@ -345,55 +344,6 @@ class ResearchTaskExecutorTests(unittest.TestCase):
             "terminal_insufficient_evidence",
         )
         self.assertEqual(result.task_patch.current_capability, SEARCH_WEB_PAGES_CAPABILITY)
-
-    def test_github_then_web_stop(self) -> None:
-        executor = self._make_executor(
-            [INSPECT_GITHUB_REPO_CAPABILITY, SEARCH_WEB_PAGES_CAPABILITY]
-        )
-        state = SummaryState(research_topic="topic")
-        task = TodoItem(id=1, title="任务", intent="目标", query="openai/openai-python")
-        responses = [
-            (
-                {
-                    "results": [
-                        {"title": "repo", "url": "https://github.com/openai/openai-python", "content": "repo", "raw_content": "repo", "score": 1.0, "source_type": "github", "result_kind": "repo"},
-                        {"title": "readme", "url": "https://github.com/openai/openai-python/blob/main/README.md", "content": "readme", "raw_content": "readme", "score": 0.9, "source_type": "github", "result_kind": "readme"},
-                    ],
-                    "backend": "github_mcp",
-                    "answer": None,
-                    "notices": [],
-                },
-                [],
-                None,
-                "github_mcp",
-            ),
-            (
-                {
-                    "results": [
-                        {"title": "w1", "url": "w1", "content": "c", "raw_content": "c", "score": 0.7, "source_type": "web_search"},
-                        {"title": "w2", "url": "w2", "content": "c", "raw_content": "c", "score": 0.6, "source_type": "web_search"},
-                        {"title": "w3", "url": "w3", "content": "c", "raw_content": "c", "score": 0.5, "source_type": "web_search"},
-                    ],
-                    "backend": "advanced",
-                    "answer": None,
-                    "notices": [],
-                },
-                [],
-                None,
-                "advanced",
-            ),
-        ]
-
-        with patch(
-            "execution.research_task_executor.dispatch_capability_search",
-            side_effect=responses,
-        ):
-            result = consume(executor.execute(state, task, emit_stream=False))
-
-        self.assertEqual(result.task_patch.attempt_count, 2)
-        self.assertEqual(result.task_patch.search_backend, "github_mcp+advanced")
-        self.assertEqual(result.task_patch.current_capability, SEARCH_WEB_PAGES_CAPABILITY)
-        self.assertIsNone(result.task_patch.evidence_gap_reason)
 
 
 if __name__ == "__main__":

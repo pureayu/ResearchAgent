@@ -6,7 +6,6 @@ import re
 from typing import Any
 
 from capability_types import (
-    INSPECT_GITHUB_REPO_CAPABILITY,
     SEARCH_ACADEMIC_PAPERS_CAPABILITY,
     SEARCH_WEB_PAGES_CAPABILITY,
 )
@@ -58,24 +57,6 @@ class EvidencePolicy:
 
             if rich_metadata_count < 2:
                 return "insufficient_academic_metadata"
-            return None
-
-        if current_capability == INSPECT_GITHUB_REPO_CAPABILITY:
-            github_results = [
-                item
-                for item in results
-                if str(item.get("source_type") or "") == "github"
-            ]
-            if not github_results:
-                return "no_results"
-            if len(github_results) < 2:
-                return "insufficient_github_coverage"
-
-            kinds = {str(item.get("result_kind") or "").strip() for item in github_results}
-            if not {"repo", "readme"} & kinds:
-                return "missing_repo_context"
-            if not {"code", "file"} & kinds:
-                return "missing_code_context"
             return None
 
         if current_capability == SEARCH_WEB_PAGES_CAPABILITY:
@@ -143,12 +124,6 @@ class EvidencePolicy:
                 " 论文 综述 benchmark 方法 代表工作"
                 if use_chinese
                 else " paper survey benchmark methods representative work"
-            )
-        elif target_capability == INSPECT_GITHUB_REPO_CAPABILITY:
-            suffix = (
-                " 仓库 实现 架构 代码 关键文件 README"
-                if use_chinese
-                else " repository implementation architecture code key files README"
             )
         elif target_capability == SEARCH_WEB_PAGES_CAPABILITY:
             suffix = (

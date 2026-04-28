@@ -8,7 +8,6 @@ from typing import Any
 
 from capability_types import (
     DEFAULT_CAPABILITY_CHAIN,
-    INSPECT_GITHUB_REPO_CAPABILITY,
     SEARCH_ACADEMIC_PAPERS_CAPABILITY,
     SEARCH_WEB_PAGES_CAPABILITY,
 )
@@ -530,8 +529,6 @@ class ResearchTaskExecutor:
     ) -> dict[str, Any]:
         if capability_id == SEARCH_ACADEMIC_PAPERS_CAPABILITY:
             stage = "retrieving_academic"
-        elif capability_id == INSPECT_GITHUB_REPO_CAPABILITY:
-            stage = "retrieving_github"
         elif capability_id == SEARCH_WEB_PAGES_CAPABILITY:
             stage = "retrieving_web"
         else:

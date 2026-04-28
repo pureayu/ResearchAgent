@@ -8,18 +8,14 @@ from typing import Any, Optional, Protocol, Tuple
 
 from capability_types import (
     SEARCH_ACADEMIC_PAPERS_CAPABILITY,
-    INSPECT_GITHUB_REPO_CAPABILITY,
     SEARCH_WEB_PAGES_CAPABILITY,
 )
 from config import Configuration
 from models import TodoItem
-from services.github_mcp import GitHubRepoCapabilityHandler
 from services.source_adapters import get_source_adapters
 from source_types import (
     ACADEMIC_SEARCH_SOURCE,
     ACADEMIC_SOURCE_TYPE,
-    GITHUB_MCP_BACKEND,
-    GITHUB_SOURCE_TYPE,
     WEB_SEARCH_SOURCE,
 )
 
@@ -43,7 +39,7 @@ class CapabilityRegistry:
     """Static in-process registry for the currently supported capabilities."""
 
     def __init__(self, config: Configuration | None = None) -> None:
-        github_enabled = bool(config.enable_github_mcp) if config is not None else False
+        del config
         self._specs = {
             SEARCH_ACADEMIC_PAPERS_CAPABILITY: CapabilitySpec(
                 id=SEARCH_ACADEMIC_PAPERS_CAPABILITY,
@@ -60,15 +56,6 @@ class CapabilityRegistry:
                 backing_source_id=WEB_SEARCH_SOURCE,
                 tags=("web", "official", "docs", "news"),
                 default_priority=30,
-            ),
-            INSPECT_GITHUB_REPO_CAPABILITY: CapabilitySpec(
-                id=INSPECT_GITHUB_REPO_CAPABILITY,
-                description="Inspect a GitHub repository via MCP to understand implementation and key files.",
-                source_type=GITHUB_SOURCE_TYPE,
-                backing_source_id=GITHUB_MCP_BACKEND,
-                tags=("github", "repo", "code", "readme"),
-                enabled=github_enabled,
-                default_priority=25,
             ),
         }
 
@@ -140,7 +127,6 @@ class CapabilityExecutor:
         self._handlers: dict[str, CapabilityHandler] = {
             SEARCH_ACADEMIC_PAPERS_CAPABILITY: SourceBackedCapabilityHandler(ACADEMIC_SEARCH_SOURCE),
             SEARCH_WEB_PAGES_CAPABILITY: SourceBackedCapabilityHandler(WEB_SEARCH_SOURCE),
-            INSPECT_GITHUB_REPO_CAPABILITY: GitHubRepoCapabilityHandler(),
         }
 
     def execute(
@@ -228,7 +214,6 @@ def _normalize_result_source_types(
     default_type_map = {
         ACADEMIC_SEARCH_SOURCE: ACADEMIC_SOURCE_TYPE,
         WEB_SEARCH_SOURCE: WEB_SEARCH_SOURCE,
-        GITHUB_MCP_BACKEND: GITHUB_SOURCE_TYPE,
     }
     default_type = default_type_map.get(source_id, WEB_SEARCH_SOURCE)
 

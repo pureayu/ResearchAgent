@@ -19,13 +19,13 @@ Each line in `cases.jsonl` is one JSON object with the following fields:
 
 - `id`: stable case identifier
 - `mode`: currently always `deep_research`
-- `domain`: `academic`, `github`, `mixed`, or `insufficient`
+- `domain`: `academic`, `mixed`, or `insufficient`
 - `language`: `zh`, `en`, or `mixed`
 - `query`: the user-facing research query
 - `expected_route_contains`: capability ids that should appear somewhere in `planned_capabilities`
 - `expected_source_types`: source types that should appear in the final evidence when the task succeeds
 - `expected_gap_reason`: expected terminal gap reason for failure-mode cases; otherwise `null`
-- `required_features`: runtime features needed to run the case, for example `github_mcp`
+- `required_features`: runtime features needed to run the case
 - `reference_titles`: known relevant papers or repositories; useful for manual inspection
 - `must_have_facts`: minimum facts the report should cover
 - `must_have_keywords`: keywords that should appear in the final report or task summary
@@ -39,21 +39,15 @@ Each line in `cases.jsonl` is one JSON object with the following fields:
 - Use `expected_route_contains` for routing checks; do not encode exact route equality unless necessary.
 - Use `must_have_facts` as short evaluation criteria, not as full reference answers.
 - Put failure-mode queries into `domain = insufficient`; these should test whether the system fails honestly.
-- When a case depends on GitHub MCP, add `required_features = ["github_mcp"]`.
-
 ## Recommended V1 Mix
 
 - `academic`: local-library and academic-paper questions
-- `github`: repository-structure and implementation questions
-- `mixed`: questions that should combine at least two capability families
+- `mixed`: questions that should combine academic and web evidence
 - `insufficient`: impossible or unsupported requests that should terminate cleanly
 
-The current starter set contains 10 cases:
+The current starter set contains 4 cases:
 
 - 4 academic
-- 3 github
-- 2 mixed
-- 1 insufficient
 
 ## Scripts
 
@@ -68,7 +62,7 @@ Run a subset:
 
 ```bash
 cd deepresearch/backend
-.venv/bin/python scripts/run_benchmark.py --case-id acad_001 --case-id gh_001
+.venv/bin/python scripts/run_benchmark.py --case-id acad_001 --case-id acad_002
 ```
 
 Score a saved run:
@@ -85,10 +79,9 @@ The scorer writes a companion `*_scored.json` file with per-case checks and aggr
 
 After the first scoring loop is in place, expand this set to roughly 30 cases:
 
-- 10 academic
-- 8 github
-- 8 mixed
-- 4 insufficient
+- 14 academic
+- 10 mixed
+- 6 insufficient
 
 Then add:
 

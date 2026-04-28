@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 import re
 from collections import Counter
 from pathlib import Path
@@ -14,7 +13,6 @@ from models import TodoItem
 
 SOURCE_LABEL_TO_TYPE = {
     "学术论文": "academic",
-    "GitHub 仓库": "github",
     "联网网页": "web_search",
 }
 
@@ -46,12 +44,8 @@ def load_cases(path: str | Path) -> list[dict[str, Any]]:
 def available_features(config: Configuration) -> set[str]:
     """Return runtime features available for benchmark execution."""
 
+    del config
     features: set[str] = set()
-    if (
-        config.enable_github_mcp
-        and (os.getenv("GITHUB_PERSONAL_ACCESS_TOKEN") or os.getenv("GITHUB_PAT"))
-    ):
-        features.add("github_mcp")
     return features
 
 

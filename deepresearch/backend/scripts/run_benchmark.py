@@ -168,7 +168,6 @@ def main() -> int:
                 "value",
                 str(config.academic_search_provider),
             ),
-            "enable_github_mcp": config.enable_github_mcp,
             "notes_workspace": config.notes_workspace,
             "memory_database_url": None,
         },
