@@ -67,6 +67,19 @@ class ResearchResponse(BaseModel):
     )
 
 
+class ResearchRouteResponse(BaseModel):
+    """Structured routing decision for a user query before launching a workflow."""
+
+    session_id: str
+    response_mode: str = Field(
+        ...,
+        description="One of memory_recall, direct_answer, or deep_research",
+    )
+    confidence: float = Field(default=0.0)
+    reason: str = Field(default="")
+    has_recallable_history: bool = Field(default=False)
+
+
 class ProjectCreateRequest(BaseModel):
     """Payload for creating a durable research project workspace."""
 
@@ -142,7 +155,9 @@ class ExternalReviewRequest(BaseModel):
         description="Optional verdict: positive, needs_revision, reject, unclear",
     )
     max_rounds: int = Field(
-        default=4,
+        default=10,
+        ge=1,
+        le=20,
         description="Maximum review rounds before marking max_rounds_reached",
     )
     use_external_model: bool = Field(
@@ -513,6 +528,29 @@ def create_app() -> FastAPI:
             session_id=result.session_id,
             report_markdown=(result.report_markdown or result.running_summary or ""),
             todo_items=todo_payload,
+        )
+
+    @app.post("/research/route", response_model=ResearchRouteResponse)
+    def route_research(payload: ResearchRequest) -> ResearchRouteResponse:
+        try:
+            config = _build_config(payload)
+            agent = _build_agent(config)
+            decision = agent.classify_response_mode_for_topic(
+                payload.topic,
+                session_id=payload.session_id,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception as exc:  # pragma: no cover - defensive guardrail
+            logger.exception("Research route classification failed")
+            raise HTTPException(status_code=500, detail="Research route failed") from exc
+
+        return ResearchRouteResponse(
+            session_id=str(decision.get("session_id") or ""),
+            response_mode=str(decision.get("response_mode") or "deep_research"),
+            confidence=float(decision.get("confidence") or 0.0),
+            reason=str(decision.get("reason") or ""),
+            has_recallable_history=bool(decision.get("has_recallable_history")),
         )
 
     @app.post("/research/stream")

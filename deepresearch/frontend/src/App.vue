@@ -43,6 +43,15 @@
                 placeholder="留空则由后端自动生成"
               />
             </label>
+            <label class="field">
+              <span>最大评审轮数</span>
+              <input
+                v-model.number="projectForm.maxReviewRounds"
+                type="number"
+                min="1"
+                max="20"
+              />
+            </label>
           </details>
 
           <div class="form-actions">
@@ -769,6 +778,7 @@
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 
 import {
+  classifyResearchRoute,
   createProject,
   runDirectionRefinement,
   runExternalReview,
@@ -880,6 +890,9 @@ type AppMode = "deep_research" | "project_workflow";
 
 const SESSION_STORAGE_KEY = "deepresearch_session_id";
 const HISTORY_STORAGE_KEY = "deepresearch_conversation_turns";
+const DEFAULT_MAX_REVIEW_ROUNDS = 10;
+const MIN_REVIEW_ROUNDS = 1;
+const MAX_REVIEW_ROUNDS = 20;
 
 const form = reactive({
   topic: "",
@@ -890,6 +903,7 @@ const projectForm = reactive({
   projectId: "",
   topic: "",
   reportMarkdown: "",
+  maxReviewRounds: DEFAULT_MAX_REVIEW_ROUNDS,
   runResearch: true,
   useStructuredExtraction: true,
   enableNoveltyCheck: false,
@@ -945,6 +959,14 @@ const TASK_STATUS_LABEL: Record<string, string> = {
 
 function formatTaskStatus(status: string): string {
   return TASK_STATUS_LABEL[status] ?? status;
+}
+
+function normalizedMaxReviewRounds(): number {
+  const value = Number(projectForm.maxReviewRounds);
+  if (!Number.isFinite(value)) {
+    return DEFAULT_MAX_REVIEW_ROUNDS;
+  }
+  return Math.min(MAX_REVIEW_ROUNDS, Math.max(MIN_REVIEW_ROUNDS, Math.round(value)));
 }
 
 function formatResponseModeLabel(mode: string | null | undefined): string {
@@ -2144,6 +2166,31 @@ const handleProjectSubmit = async () => {
   let ideaHeartbeat: ReturnType<typeof window.setInterval> | null = null;
 
   try {
+    if (!report && projectForm.runResearch) {
+      projectRuntimeStage.value = "意图识别";
+      loadingLabel.value = "判断问题类型";
+      progressLogs.value.push("调用模型结构化路由，判断是否需要创建研究项目");
+      const route = await classifyResearchRoute({
+        topic,
+        session_id: currentSessionId.value || undefined,
+        search_api: form.searchApi || undefined
+      });
+      if (route.session_id) {
+        currentSessionId.value = route.session_id;
+        window.localStorage.setItem(SESSION_STORAGE_KEY, route.session_id);
+      }
+      if (route.response_mode !== "deep_research") {
+        progressLogs.value.push(
+          `模型判定为${formatResponseModeLabel(route.response_mode)}，转入普通问答链路`
+        );
+        appMode.value = "deep_research";
+        resetProjectWorkflowState();
+        await submitResearch(topic);
+        return;
+      }
+      progressLogs.value.push("模型判定为深度研究，继续创建研究项目工作区");
+    }
+
     projectRuntimeStage.value = "项目创建";
     progressLogs.value.push("创建研究项目工作区");
     const created = await createProject({
@@ -2249,7 +2296,7 @@ const handleSelectProjectDirection = async (candidate: IdeaCandidate, index: num
 
     let activeRefinementResult = refinementResult;
     if (projectForm.useExternalReview) {
-      const maxReviewRounds = 4;
+      const maxReviewRounds = normalizedMaxReviewRounds();
       let accepted = false;
       let relaxedBridge = false;
       for (let round = 1; round <= maxReviewRounds; round += 1) {
@@ -2377,6 +2424,7 @@ const startNewResearch = () => {
   projectForm.topic = "";
   projectForm.projectId = "";
   projectForm.reportMarkdown = "";
+  projectForm.maxReviewRounds = DEFAULT_MAX_REVIEW_ROUNDS;
 };
 
 onMounted(() => {

@@ -250,25 +250,56 @@ class SpecialModeExecutor:
     ) -> str:
         """Classify the best response mode with model-first routing."""
 
+        return self.classify_response_mode_details(topic, recalled_context)["response_mode"]
+
+    def classify_response_mode_details(
+        self,
+        topic: str,
+        recalled_context: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        """Classify response mode and preserve structured routing metadata."""
+
         prompt = self._build_response_mode_classifier_input(topic, recalled_context)
         selection = self._select_response_mode(prompt)
         if selection is None:
-            return RESPONSE_MODE_DEEP_RESEARCH
+            return {
+                "response_mode": RESPONSE_MODE_DEEP_RESEARCH,
+                "confidence": 0.0,
+                "reason": "Classifier unavailable; defaulting to deep research.",
+            }
 
         response_mode = selection["response_mode"]
-        if selection["confidence"] < MODE_CLASSIFIER_CONFIDENCE_THRESHOLD:
-            return RESPONSE_MODE_DEEP_RESEARCH
+        confidence = selection["confidence"]
+        reason = selection["reason"]
+        if confidence < MODE_CLASSIFIER_CONFIDENCE_THRESHOLD:
+            return {
+                "response_mode": RESPONSE_MODE_DEEP_RESEARCH,
+                "confidence": confidence,
+                "reason": reason or "Classifier confidence below threshold.",
+            }
         if (
             response_mode == RESPONSE_MODE_DIRECT_ANSWER
             and self._is_research_intent_topic(topic)
         ):
-            return RESPONSE_MODE_DEEP_RESEARCH
+            return {
+                "response_mode": RESPONSE_MODE_DEEP_RESEARCH,
+                "confidence": confidence,
+                "reason": reason or "Research-intent topic should use deep research.",
+            }
         if (
             response_mode == RESPONSE_MODE_DIRECT_ANSWER
             and not self._has_direct_answer_context(recalled_context)
         ):
-            return RESPONSE_MODE_DEEP_RESEARCH
-        return response_mode
+            return {
+                "response_mode": RESPONSE_MODE_DEEP_RESEARCH,
+                "confidence": confidence,
+                "reason": reason or "Direct-answer context is not available.",
+            }
+        return {
+            "response_mode": response_mode,
+            "confidence": confidence,
+            "reason": reason,
+        }
 
     @staticmethod
     def has_recallable_history(recalled_context: dict[str, Any] | None) -> bool:

@@ -38,7 +38,7 @@ class ExternalReviewService:
         *,
         review_text: str | None = None,
         verdict: str | None = None,
-        max_rounds: int = 4,
+        max_rounds: int = 10,
     ) -> ExternalReviewResult:
         """Append one review round and update REVIEW_STATE.json."""
 
@@ -306,7 +306,7 @@ def _draft_tasks(
         tasks.append(
             ExperimentTask(
                 id=f"R{index}",
-                title=action[:120],
+                title=_task_title(action),
                 goal=action,
                 expected_signal="Revision item is reflected in the contract, baselines, or metrics.",
                 status="draft",
@@ -317,10 +317,15 @@ def _draft_tasks(
             tasks.append(
                 ExperimentTask(
                     id=f"R{index}",
-                    title=experiment[:120],
+                    title=_task_title(experiment),
                     goal=experiment,
                     expected_signal=candidate.expected_signal,
                     status="draft",
                 )
             )
     return tasks
+
+
+def _task_title(text: str) -> str:
+    first = text.split(":", 1)[0].strip()
+    return first or text.strip() or "Revision task"

@@ -118,7 +118,12 @@ def build_structured_direction_refiner(config):
             "from an unrelated idea. All list fields must be real arrays/lists of strings, "
             "not serialized JSON strings. For example, required_experiments must be "
             "[\"Compare against baseline\", \"Run ablation\"], never "
-            "\"[\\\"Compare against baseline\\\", \\\"Run ablation\\\"]\"."
+            "\"[\\\"Compare against baseline\\\", \\\"Run ablation\\\"]\". "
+            "Return all user-visible prose fields in Simplified Chinese, including title, "
+            "problem, hypothesis, method_sketch, expected_signal, novelty_risk, feasibility, "
+            "impact, ranking_rationale, reviewer_objection, why_do_this, and required_experiments. "
+            "Keep standard technical terms, acronyms, system names, and metrics in English "
+            "when that is clearer."
         ),
         schema=IdeaCandidate,
         agent_name="DirectionRefiner",
@@ -140,7 +145,8 @@ Selected broad direction:
 Research landscape report:
 {report[:12000]}
 
-Return one refined, concrete research idea. It should be specific enough for reviewer critique and experiment planning. If the report contains reviewer feedback, explicitly address it in hypothesis, method_sketch, expected_signal, feasibility, reviewer_objection, and required_experiments."""
+Return one refined, concrete research idea. It should be specific enough for reviewer critique and experiment planning. If the report contains reviewer feedback, explicitly address it in hypothesis, method_sketch, expected_signal, feasibility, reviewer_objection, and required_experiments.
+Write the returned candidate content in Simplified Chinese for the web UI."""
         try:
             output = runner.invoke(prompt)
         except Exception:

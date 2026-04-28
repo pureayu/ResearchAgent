@@ -12,6 +12,14 @@ export interface ResearchStreamEvent {
   [key: string]: unknown;
 }
 
+export interface ResearchRouteResponse {
+  session_id: string;
+  response_mode: "memory_recall" | "direct_answer" | "deep_research";
+  confidence: number;
+  reason: string;
+  has_recallable_history: boolean;
+}
+
 export interface StreamOptions {
   signal?: AbortSignal;
 }
@@ -242,6 +250,15 @@ export async function runExperimentBridge(
       body: JSON.stringify(payload)
     }
   );
+}
+
+export async function classifyResearchRoute(
+  payload: ResearchRequest
+): Promise<ResearchRouteResponse> {
+  return requestJson<ResearchRouteResponse>("/research/route", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
 }
 
 export async function runResearchStream(

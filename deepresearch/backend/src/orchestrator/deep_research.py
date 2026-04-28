@@ -152,6 +152,31 @@ class DeepResearchAgent:
             todo_items=state.todo_items,
         )
 
+    def classify_response_mode_for_topic(
+        self,
+        topic: str,
+        session_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Return the structured response-mode routing decision for a topic."""
+
+        state = self._create_state(topic, session_id)
+        state.recalled_context = self.memory_service.load_relevant_context(
+            state.session_id,
+            topic,
+            exclude_run_id=state.run_id,
+        )
+        decision = self._special_mode_executor.classify_response_mode_details(
+            topic,
+            state.recalled_context,
+        )
+        return {
+            **decision,
+            "session_id": state.session_id,
+            "has_recallable_history": SpecialModeExecutor.has_recallable_history(
+                state.recalled_context
+            ),
+        }
+
     def _build_structured_runner(
         self,
         role_id: str,

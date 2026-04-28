@@ -23,7 +23,10 @@ def build_structured_external_reviewer(config: Configuration):
             "Review the active idea for novelty, feasibility, evaluation quality, and "
             "paper-worthiness. Return actionable feedback. Use verdict=positive only "
             "when the idea is ready to proceed to experiments; use needs_revision for "
-            "fixable gaps; use reject for severe flaws; use unclear when evidence is insufficient."
+            "fixable gaps; use reject for severe flaws; use unclear when evidence is insufficient. "
+            "Return all user-visible prose fields in Simplified Chinese, including summary, "
+            "strengths, weaknesses, action_items, and raw_review. Keep standard technical "
+            "terms, acronyms, system names, and metrics in English when that is clearer."
         ),
         schema=ExternalReviewOutput,
         agent_name="ExternalResearchReviewer",
@@ -42,7 +45,8 @@ def build_structured_external_reviewer(config: Configuration):
 Candidate:
 {_format_candidate(candidate)}
 
-Review this research idea as an external reviewer. Include strengths, weaknesses, action_items, and a conservative verdict."""
+Review this research idea as an external reviewer. Include strengths, weaknesses, action_items, and a conservative verdict.
+Write the review content in Simplified Chinese for the web UI."""
         output = runner.invoke(prompt)
         if not output.raw_review:
             output.raw_review = output.summary

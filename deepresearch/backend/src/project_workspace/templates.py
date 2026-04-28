@@ -164,9 +164,16 @@ def render_experiment_plan(
     method = candidate.method_sketch if candidate else "TBD"
     expected_signal = candidate.expected_signal if candidate else "TBD"
     experiments = candidate.required_experiments if candidate else []
-    experiment_rows = "\n".join(
-        f"| {item} | {expected_signal} | {item} |" for item in experiments
-    ) or "| TBD | TBD | TBD |"
+    experiment_blocks = "\n\n".join(
+        f"### E{index}: {_experiment_title(item)}\n\n"
+        f"- Claim tested: {item}\n"
+        f"- Evidence needed: {expected_signal}\n"
+        "- Command: TODO after selecting the concrete device, model, runtime, workload config, and output path."
+        for index, item in enumerate(experiments, start=1)
+    ) or "### E1: TBD\n\n- Claim tested: TBD\n- Evidence needed: TBD\n- Command: TBD"
+    run_order = "\n".join(
+        [f"{index}. E{index}: {_experiment_title(item)}" for index, item in enumerate(experiments, start=1)]
+    ) or "1. E1: TBD"
     return f"""# Experiment Plan
 
 ## Problem
@@ -183,28 +190,20 @@ def render_experiment_plan(
 
 ## Claim Map
 
-| Claim | Evidence Needed | Experiment |
-| --- | --- | --- |
-{experiment_rows}
+{experiment_blocks}
 
 ## Experiment Blocks
 
 ### E0: Sanity Check
 
 - Goal: Verify the pipeline runs end-to-end on a tiny setting.
-- Command: TBD
-- Expected signal: TBD
-
-### E1: Main Result
-
-- Goal: Test the primary claim against baselines.
-- Command: TBD
-- Expected signal: TBD
+- Command: TODO after selecting the concrete device, model, runtime, workload config, and output path.
+- Expected signal: Pipeline completes and produces interpretable metrics.
 
 ## Run Order
 
-1. E0 sanity check
-2. E1 main result
+0. E0: sanity check
+{run_order}
 
 ## Compute Budget
 
@@ -269,6 +268,11 @@ def _render_list(items: list[str]) -> str:
     return "\n".join(f"- {item}" for item in items if item.strip())
 
 
+def _experiment_title(text: str) -> str:
+    first = text.split(":", 1)[0].strip()
+    return first or text.strip() or "Experiment"
+
+
 def render_experiment_tracker(_: ProjectStatus) -> str:
     """Render the durable experiment progress tracker."""
 
@@ -302,7 +306,7 @@ def render_review_state() -> str:
     return json.dumps(
         {
             "round": 0,
-            "max_rounds": 4,
+            "max_rounds": 10,
             "status": "not_started",
             "latest_thread_id": None,
             "latest_verdict": None,

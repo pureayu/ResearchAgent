@@ -354,14 +354,12 @@ class ProjectWorkspaceService:
 
     @staticmethod
     def _project_description_from_candidate(candidate: IdeaCandidate) -> str:
-        parts = [
-            candidate.title,
-            candidate.problem,
-            candidate.hypothesis,
-            candidate.method_sketch,
-        ]
-        text = " ".join(part.strip() for part in parts if part and part.strip())
-        return re.sub(r"\s+", " ", text).strip()[:220]
+        text = (
+            candidate.title.strip()
+            or candidate.problem.strip()
+            or candidate.hypothesis.strip()
+        )
+        return re.sub(r"\s+", " ", text).strip()
 
     @staticmethod
     def _first_meaningful_paragraph(markdown: str) -> str:

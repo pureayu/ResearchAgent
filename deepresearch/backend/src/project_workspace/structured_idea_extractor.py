@@ -54,7 +54,12 @@ def build_structured_idea_extractor(
             "Do not output titles containing arXiv IDs, DOI strings, paper citations, "
             "or representative-source bullets. "
             "Ground candidates in the supplied report, but synthesize ideas instead of "
-            "extracting report headings."
+            "extracting report headings. "
+            "Return all user-visible prose fields in Simplified Chinese, including title, "
+            "problem, hypothesis, method_sketch, expected_signal, novelty_risk, feasibility, "
+            "impact, ranking_rationale, reviewer_objection, why_do_this, and required_experiments. "
+            "Keep standard technical terms, model names, paper/system names, acronyms, and metrics "
+            "in English when that is clearer, but explain them in Chinese."
         ),
         schema=IdeaCandidatesOutput,
         agent_name="ARISIdeaCreator",
@@ -86,6 +91,10 @@ Good output examples:
 - "Flash-backed quantized KV cache placement for long-context mobile agents"
 - "Static NPU lowering for dynamic MoE routing operators on mobile SoCs"
 - "Thermal-budget-aware speculative decoding for sustained phone inference"
+
+Language:
+- Return the candidate content in Simplified Chinese for the web UI.
+- Keep technical names such as KV cache, NPU, speculative decoding, MLC-LLM, llama.cpp, and p95 latency in English when useful.
 """
         first = runner.invoke(prompt).candidates
         if _has_enough_valid_candidates(first):
@@ -105,6 +114,7 @@ Regenerate 3 to 5 candidates. Requirements:
 4. method_sketch must describe the mechanism to implement or test.
 5. minimum_viable_experiment and required_experiments must be concrete validation steps.
 6. expected_signal must name measurable evidence such as latency, memory, energy, quality, robustness, or privacy.
+7. Return all user-visible prose fields in Simplified Chinese.
 """
         repaired = runner.invoke(repair_prompt).candidates
         if _has_enough_valid_candidates(repaired):

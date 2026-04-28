@@ -132,6 +132,7 @@ def build_experiment_tasks(
                 id="E0",
                 title="Sanity check",
                 goal="Verify the code/data/evaluation path on a tiny setting before full experiments.",
+                command="TODO: fill the smallest end-to-end command after choosing the target device, model, and runtime.",
                 expected_signal="Pipeline completes and produces interpretable metrics.",
             )
         )
@@ -145,8 +146,9 @@ def build_experiment_tasks(
         tasks.append(
             ExperimentTask(
                 id=f"E{offset}",
-                title=experiment[:120],
+                title=_task_title(experiment),
                 goal=experiment,
+                command="TODO: fill the concrete command, device ID, model path, workload config, and output path.",
                 expected_signal=candidate.expected_signal or "Evidence supports or falsifies the core hypothesis.",
             )
         )
@@ -156,13 +158,30 @@ def build_experiment_tasks(
 def render_experiment_tracker(tasks: list[ExperimentTask]) -> str:
     """Render experiment tasks as the durable tracker Markdown."""
 
-    rows = "\n".join(
-        f"| {task.id} | {task.status} | {task.title} | {task.command} | {task.expected_signal} |"
-        for task in tasks
-    )
-    return f"""# Experiment Tracker
+    blocks = ["# Experiment Tracker", ""]
+    for task in tasks:
+        blocks.extend(
+            [
+                f"## {task.id}: {task.title}",
+                "",
+                f"- status: {task.status}",
+                f"- command: {task.command}",
+                "",
+                "### Goal",
+                "",
+                task.goal or "TBD",
+                "",
+                "### Expected Signal",
+                "",
+                task.expected_signal or "TBD",
+                "",
+            ]
+        )
+    return "\n".join(blocks).rstrip() + "\n"
 
-| ID | Status | Task | Command | Expected Signal |
-| --- | --- | --- | --- | --- |
-{rows}
-"""
+
+def _task_title(experiment: str) -> str:
+    """Return a stable, readable title without truncating mid-word."""
+
+    first = experiment.split(":", 1)[0].strip()
+    return first or experiment.strip() or "Experiment"
