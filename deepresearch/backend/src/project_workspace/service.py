@@ -21,6 +21,7 @@ from project_workspace.templates import (
     render_experiment_plan,
     render_experiment_tracker,
     render_idea_candidates,
+    render_project_index,
     render_research_contract,
     render_review_state,
 )
@@ -51,6 +52,8 @@ class ProjectWorkspaceService:
         status = ProjectStatus(
             project_id=self._safe_project_id(project_id or self._project_id_from_topic(clean_topic)),
             topic=clean_topic,
+            name=self._project_name_from_topic(clean_topic),
+            description=self._project_description_from_topic(clean_topic),
             selected_idea=(selected_idea or "").strip(),
         )
         project_dir = self._project_dir(status.project_id)
@@ -59,6 +62,7 @@ class ProjectWorkspaceService:
         (project_dir / "refine-logs").mkdir(exist_ok=True)
 
         self._write_status(project_dir, status)
+        self._write_text_if_missing(project_dir / "PROJECT_INDEX.md", render_project_index(status))
         self._write_text_if_missing(project_dir / self.HUMAN_STATUS_FILE, render_claude_md(status))
         self._write_text_if_missing(project_dir / status.contract_path, render_research_contract(status))
         self._write_text_if_missing(project_dir / status.experiment_plan_path, render_experiment_plan(status))
@@ -78,6 +82,7 @@ class ProjectWorkspaceService:
         status = self.load_status(safe_id)
         files = {
             "status": str(project_dir / self.STATUS_FILE),
+            "project_index": str(project_dir / "PROJECT_INDEX.md"),
             "human_status": str(project_dir / self.HUMAN_STATUS_FILE),
             "idea_report": str(project_dir / "IDEA_REPORT.md"),
             "idea_candidates": str(project_dir / "IDEA_CANDIDATES.md"),
@@ -121,6 +126,7 @@ class ProjectWorkspaceService:
         project_dir = self._project_dir(safe_id)
         status = self.load_status(safe_id).merged(patch)
         self._write_status(project_dir, status)
+        self._write_text(project_dir / "PROJECT_INDEX.md", render_project_index(status))
         self._write_text(project_dir / self.HUMAN_STATUS_FILE, render_claude_md(status))
         if refresh_contract:
             self._write_text(project_dir / status.contract_path, render_research_contract(status))
@@ -158,6 +164,10 @@ class ProjectWorkspaceService:
 
         patch: dict[str, Any] = {
             "stage": ProjectStage.REFINE_PLAN if selected else ProjectStage.HUMAN_GATE,
+            "description": self._project_description_from_discovery(
+                report_markdown,
+                selected,
+            ),
             "active_tasks": [
                 "Review IDEA_CANDIDATES.md",
                 "Validate selected idea and refine experiment plan",
@@ -173,6 +183,7 @@ class ProjectWorkspaceService:
         status = status.merged(patch)
 
         self._write_status(project_dir, status)
+        self._write_text(project_dir / "PROJECT_INDEX.md", render_project_index(status))
         self._write_text(project_dir / self.HUMAN_STATUS_FILE, render_claude_md(status))
         self._write_text(project_dir / status.contract_path, render_research_contract(status, selected))
         self._write_text(project_dir / status.experiment_plan_path, render_experiment_plan(status, selected))
@@ -223,6 +234,7 @@ class ProjectWorkspaceService:
             {
                 "stage": ProjectStage.REFINE_PLAN,
                 "selected_idea": candidate.title,
+                "description": self._project_description_from_candidate(candidate),
                 "active_tasks": [
                     "Review refined selected idea",
                     "Run external review",
@@ -232,6 +244,7 @@ class ProjectWorkspaceService:
             }
         )
         self._write_status(project_dir, status)
+        self._write_text(project_dir / "PROJECT_INDEX.md", render_project_index(status))
         self._write_text(project_dir / self.HUMAN_STATUS_FILE, render_claude_md(status))
         self._write_text(project_dir / status.contract_path, render_research_contract(status, candidate))
         self._write_text(project_dir / status.experiment_plan_path, render_experiment_plan(status, candidate))
@@ -296,3 +309,42 @@ class ProjectWorkspaceService:
         if not base:
             base = "research-project"
         return f"{base[:48]}-{utc_now_iso().replace(':', '').replace('+', 'Z')}"
+
+    @staticmethod
+    def _project_name_from_topic(topic: str) -> str:
+        normalized = re.sub(r"\s+", " ", topic.strip())
+        return normalized[:80] or "Research Project"
+
+    @staticmethod
+    def _project_description_from_topic(topic: str) -> str:
+        normalized = re.sub(r"\s+", " ", topic.strip())
+        return f"Research workspace for: {normalized[:180]}"
+
+    def _project_description_from_discovery(
+        self,
+        report_markdown: str,
+        selected: IdeaCandidate | None,
+    ) -> str:
+        if selected is not None:
+            return self._project_description_from_candidate(selected)
+        return self._first_meaningful_paragraph(report_markdown)[:220]
+
+    @staticmethod
+    def _project_description_from_candidate(candidate: IdeaCandidate) -> str:
+        parts = [
+            candidate.title,
+            candidate.problem,
+            candidate.hypothesis,
+            candidate.method_sketch,
+        ]
+        text = " ".join(part.strip() for part in parts if part and part.strip())
+        return re.sub(r"\s+", " ", text).strip()[:220]
+
+    @staticmethod
+    def _first_meaningful_paragraph(markdown: str) -> str:
+        for block in re.split(r"\n\s*\n", markdown):
+            cleaned = re.sub(r"^#+\s*", "", block.strip())
+            cleaned = re.sub(r"\s+", " ", cleaned)
+            if len(cleaned) >= 20 and "No idea discovery" not in cleaned:
+                return cleaned
+        return "Idea discovery report generated for this project."

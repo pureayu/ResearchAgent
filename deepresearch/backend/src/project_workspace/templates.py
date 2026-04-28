@@ -7,11 +7,46 @@ import json
 from project_workspace.models import IdeaCandidate, ProjectStatus
 
 
+def render_project_index(status: ProjectStatus) -> str:
+    """Render the searchable top-level project index."""
+
+    name = status.name or status.topic
+    description = status.description or status.next_action or status.topic
+    return f"""# Project Index
+
+Name: {name}
+Description: {description}
+
+## Metadata
+
+- project_id: {status.project_id}
+- topic: {status.topic}
+- stage: {status.stage.value}
+- selected_idea: {status.selected_idea or "TBD"}
+- updated_at: {status.updated_at}
+
+## Key Files
+
+- PROJECT_STATUS.json
+- IDEA_REPORT.md
+- IDEA_CANDIDATES.md
+- docs/research_contract.md
+- REVIEW_STATE.json
+- AUTO_REVIEW.md
+- refine-logs/REVISION_PLAN.md
+- refine-logs/EXPERIMENT_TRACKER.md
+- EXPERIMENT_LOG.md
+"""
+
+
 def render_claude_md(status: ProjectStatus) -> str:
     """Render a human-readable project status file compatible with ARIS habits."""
 
     active_tasks = "\n".join(f"- {task}" for task in status.active_tasks) or "- None"
     return f"""# Research Project
+
+Name: {status.name or status.topic}
+Description: {status.description or status.next_action}
 
 ## Pipeline Status
 
@@ -248,6 +283,7 @@ def render_review_state() -> str:
 
 
 STATIC_TEMPLATES = {
+    "PROJECT_INDEX.md": "# Project Index\n\nName: TBD\nDescription: TBD\n",
     "IDEA_REPORT.md": "# Idea Report\n\nNo idea discovery run has been recorded yet.\n",
     "IDEA_CANDIDATES.md": "# Idea Candidates\n\nNo candidates yet.\n",
     "AUTO_REVIEW.md": "# Auto Review\n\nNo external review rounds yet.\n",

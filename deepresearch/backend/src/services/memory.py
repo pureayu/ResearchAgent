@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -150,28 +151,27 @@ class FileMemoryService:
             if direct.exists():
                 candidates.append(direct)
 
-        if not candidates:
-            candidates.extend(self._recent_project_dirs(limit=5))
+        candidate_ids = {item.name for item in candidates}
+        for project_dir in self._recent_project_dirs(limit=20):
+            if project_dir.name not in candidate_ids:
+                candidates.append(project_dir)
+                candidate_ids.add(project_dir.name)
 
         topic_terms = self._terms(topic)
-        summaries: list[dict[str, Any]] = []
+        ranked: list[tuple[int, float, dict[str, Any]]] = []
         for project_dir in candidates:
             status = self._read_status(project_dir)
             if not status:
                 continue
-            if topic_terms and project_dir not in candidates[:1]:
-                searchable = " ".join(
-                    [
-                        str(status.get("topic") or ""),
-                        str(status.get("selected_idea") or ""),
-                        str(status.get("next_action") or ""),
-                    ]
-                ).lower()
-                if not any(term in searchable for term in topic_terms):
-                    continue
-            summaries.append(self._summarize_project(project_dir, status))
-            if len(summaries) >= 3:
-                break
+            is_direct = bool(session_id and project_dir == self._project_dir(session_id))
+            search_blob = self._project_search_blob(project_dir, status)
+            score = self._match_score(search_blob, topic_terms)
+            if topic_terms and not is_direct and score <= 0:
+                continue
+            summary = self._summarize_project(project_dir, status, search_blob=search_blob)
+            ranked.append((1 if is_direct else 0, score, summary))
+        ranked.sort(key=lambda item: (item[0], item[1]), reverse=True)
+        summaries = [item[2] for item in ranked[:3]]
         return summaries
 
     def _recent_project_dirs(self, *, limit: int) -> list[Path]:
@@ -204,9 +204,17 @@ class FileMemoryService:
         except (OSError, json.JSONDecodeError):
             return None
 
-    def _summarize_project(self, project_dir: Path, status: dict[str, Any]) -> dict[str, Any]:
+    def _summarize_project(
+        self,
+        project_dir: Path,
+        status: dict[str, Any],
+        *,
+        search_blob: str = "",
+    ) -> dict[str, Any]:
         project_id = str(status.get("project_id") or project_dir.name)
         topic = str(status.get("topic") or "")
+        name = str(status.get("name") or topic or project_id)
+        description = str(status.get("description") or "")
         stage = str(status.get("stage") or "unknown")
         selected_idea = str(status.get("selected_idea") or "")
         next_action = str(status.get("next_action") or "")
@@ -216,8 +224,11 @@ class FileMemoryService:
             if str(item).strip()
         ][:5]
         files = self._available_memory_files(project_dir)
+        snippets = self._matching_snippets(search_blob)
         summary_parts = [
             f"项目 {project_id}",
+            f"名称：{name}" if name else "",
+            f"描述：{description}" if description else "",
             f"主题：{topic}" if topic else "",
             f"阶段：{stage}",
             f"选中方向：{selected_idea}" if selected_idea else "",
@@ -227,9 +238,13 @@ class FileMemoryService:
             summary_parts.append("当前任务：" + "；".join(active_tasks))
         if files:
             summary_parts.append("可恢复文件：" + "、".join(files))
+        if snippets:
+            summary_parts.append("相关片段：" + " / ".join(snippets))
 
         return {
             "project_id": project_id,
+            "name": name,
+            "description": description,
             "topic": topic,
             "stage": stage,
             "selected_idea": selected_idea,
@@ -241,6 +256,7 @@ class FileMemoryService:
 
     def _available_memory_files(self, project_dir: Path) -> list[str]:
         relative_paths = [
+            "PROJECT_INDEX.md",
             "CLAUDE.md",
             "IDEA_REPORT.md",
             "IDEA_CANDIDATES.md",
@@ -265,12 +281,81 @@ class FileMemoryService:
     @staticmethod
     def _terms(text: str) -> list[str]:
         normalized = (text or "").lower()
-        terms = [
-            token.strip()
-            for token in normalized.replace("（", " ").replace("）", " ").split()
-            if len(token.strip()) >= 2
+        normalized = re.sub(r"[，。！？、；：,.!?;:()\[\]{}<>《》“”\"'`~|/\\_-]+", " ", normalized)
+        raw_terms = [token.strip() for token in normalized.split() if len(token.strip()) >= 2]
+        terms: list[str] = []
+        for token in raw_terms:
+            terms.append(token)
+            if re.search(r"[\u4e00-\u9fff]", token):
+                cjk = re.sub(r"[^\u4e00-\u9fff]", "", token)
+                for width in (2, 3, 4):
+                    terms.extend(cjk[index : index + width] for index in range(max(0, len(cjk) - width + 1)))
+
+        deduped: list[str] = []
+        seen: set[str] = set()
+        for term in terms:
+            if term and term not in seen:
+                deduped.append(term)
+                seen.add(term)
+            if len(deduped) >= 32:
+                break
+        return deduped
+
+    def _project_search_blob(self, project_dir: Path, status: dict[str, Any]) -> str:
+        fields = [
+            status.get("name"),
+            status.get("description"),
+            status.get("topic"),
+            status.get("selected_idea"),
+            status.get("next_action"),
+            " ".join(str(item) for item in status.get("active_tasks") or []),
         ]
-        return terms[:8]
+        fragments = [str(field) for field in fields if field]
+        for relative_path in self._searchable_memory_files():
+            path = project_dir / relative_path
+            try:
+                text = path.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            fragments.append(text[:4000])
+        return "\n".join(fragments).lower()
+
+    @staticmethod
+    def _searchable_memory_files() -> list[str]:
+        return [
+            "PROJECT_INDEX.md",
+            "CLAUDE.md",
+            "IDEA_REPORT.md",
+            "IDEA_CANDIDATES.md",
+            "docs/research_contract.md",
+            "AUTO_REVIEW.md",
+            "refine-logs/REVISION_PLAN.md",
+            "findings.md",
+        ]
+
+    @staticmethod
+    def _match_score(search_blob: str, topic_terms: list[str]) -> float:
+        if not topic_terms:
+            return 0.0
+        score = 0.0
+        for term in topic_terms:
+            occurrences = search_blob.count(term)
+            if occurrences:
+                score += min(3, occurrences) * min(4, len(term))
+        return score
+
+    @staticmethod
+    def _matching_snippets(search_blob: str) -> list[str]:
+        snippets: list[str] = []
+        for raw_line in search_blob.splitlines():
+            line = re.sub(r"\s+", " ", raw_line.strip())
+            if not line:
+                continue
+            if line.startswith(("name:", "description:", "- selected_idea:", "- topic:")):
+                snippets.append(line[:180])
+            if len(snippets) >= 3:
+                break
+        return snippets
 
 
 def create_memory_service(config: Configuration) -> FileMemoryService:

@@ -10,6 +10,7 @@ if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
 from config import Configuration
+from project_workspace.service import ProjectWorkspaceService
 from services.memory import FileMemoryService, create_memory_service
 
 
@@ -75,6 +76,65 @@ class FileMemoryServiceTests(unittest.TestCase):
 
         self.assertEqual([item["title"] for item in logs], ["Revise novelty", "Update baselines"])
         self.assertEqual(logs[0]["status"], "refine_plan")
+
+    def test_project_index_is_created_with_name_and_description(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = ProjectWorkspaceService(tmp)
+            snapshot = workspace.create_project(topic="手机端大模型推理研究方向")
+            index_path = Path(snapshot.files["project_index"])
+            index_text = index_path.read_text(encoding="utf-8")
+
+        self.assertIn("Name: 手机端大模型推理研究方向", index_text)
+        self.assertIn("Description: Research workspace for: 手机端大模型推理研究方向", index_text)
+
+    def test_load_relevant_context_searches_local_project_index_and_files(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            unrelated = Path(tmp) / "unrelated"
+            unrelated.mkdir(parents=True)
+            (unrelated / "PROJECT_STATUS.json").write_text(
+                json.dumps(
+                    {
+                        "project_id": "unrelated",
+                        "topic": "图像生成",
+                        "name": "Diffusion image project",
+                        "description": "A project about image generation.",
+                        "stage": "done",
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+
+            related = Path(tmp) / "mobile-llm"
+            related.mkdir(parents=True)
+            (related / "PROJECT_STATUS.json").write_text(
+                json.dumps(
+                    {
+                        "project_id": "mobile-llm",
+                        "topic": "端侧推理",
+                        "name": "Mobile LLM inference",
+                        "description": "手机端 NPU KV cache 和 speculative decoding 调研资料",
+                        "stage": "human_gate",
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            (related / "PROJECT_INDEX.md").write_text(
+                "Name: Mobile LLM inference\nDescription: 手机端 NPU KV cache 和 speculative decoding 调研资料\n",
+                encoding="utf-8",
+            )
+            (related / "IDEA_REPORT.md").write_text(
+                "这里记录了端侧大模型推理、手机 NPU、KV cache 优化方向。",
+                encoding="utf-8",
+            )
+
+            service = FileMemoryService(Configuration(project_workspace_root=tmp))
+            context = service.load_relevant_context(None, "手机端大模型推理 NPU 方向")
+
+        self.assertEqual(context["project_memory"][0]["project_id"], "mobile-llm")
+        self.assertIn("Mobile LLM inference", context["working_memory_summary"])
+        self.assertNotIn("Diffusion image project", context["working_memory_summary"])
 
 
 if __name__ == "__main__":

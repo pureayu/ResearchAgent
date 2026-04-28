@@ -35,6 +35,8 @@ class ProjectStatus(BaseModel):
 
     project_id: str
     topic: str
+    name: str = ""
+    description: str = ""
     stage: ProjectStage = ProjectStage.INTAKE
     selected_idea: str = ""
     contract_path: str = "docs/research_contract.md"
@@ -52,6 +54,8 @@ class ProjectStatus(BaseModel):
         """Return a new status with allowed user-provided fields patched."""
 
         allowed = {
+            "name",
+            "description",
             "stage",
             "selected_idea",
             "baseline",
