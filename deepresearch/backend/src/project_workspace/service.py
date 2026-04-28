@@ -21,9 +21,10 @@ from project_workspace.templates import (
     render_experiment_plan,
     render_experiment_tracker,
     render_idea_candidates,
-    render_project_index,
+    render_project_card,
     render_research_contract,
     render_review_state,
+    render_workspace_index,
 )
 
 
@@ -32,6 +33,8 @@ class ProjectWorkspaceService:
 
     STATUS_FILE = "PROJECT_STATUS.json"
     HUMAN_STATUS_FILE = "CLAUDE.md"
+    PROJECT_CARD_FILE = "PROJECT_CARD.md"
+    WORKSPACE_INDEX_FILE = "PROJECT_INDEX.md"
 
     def __init__(self, root: str | Path) -> None:
         self.root = Path(root).expanduser().resolve()
@@ -62,7 +65,7 @@ class ProjectWorkspaceService:
         (project_dir / "refine-logs").mkdir(exist_ok=True)
 
         self._write_status(project_dir, status)
-        self._write_text_if_missing(project_dir / "PROJECT_INDEX.md", render_project_index(status))
+        self._write_text_if_missing(project_dir / self.PROJECT_CARD_FILE, render_project_card(status))
         self._write_text_if_missing(project_dir / self.HUMAN_STATUS_FILE, render_claude_md(status))
         self._write_text_if_missing(project_dir / status.contract_path, render_research_contract(status))
         self._write_text_if_missing(project_dir / status.experiment_plan_path, render_experiment_plan(status))
@@ -71,6 +74,7 @@ class ProjectWorkspaceService:
         self._write_text_if_missing(project_dir / "REVIEW_STATE.json", render_review_state())
         for relative_path, content in STATIC_TEMPLATES.items():
             self._write_text_if_missing(project_dir / relative_path, content)
+        self._refresh_workspace_index()
 
         return self.snapshot(status.project_id)
 
@@ -82,7 +86,8 @@ class ProjectWorkspaceService:
         status = self.load_status(safe_id)
         files = {
             "status": str(project_dir / self.STATUS_FILE),
-            "project_index": str(project_dir / "PROJECT_INDEX.md"),
+            "workspace_index": str(self.root / self.WORKSPACE_INDEX_FILE),
+            "project_card": str(project_dir / self.PROJECT_CARD_FILE),
             "human_status": str(project_dir / self.HUMAN_STATUS_FILE),
             "idea_report": str(project_dir / "IDEA_REPORT.md"),
             "idea_candidates": str(project_dir / "IDEA_CANDIDATES.md"),
@@ -126,10 +131,11 @@ class ProjectWorkspaceService:
         project_dir = self._project_dir(safe_id)
         status = self.load_status(safe_id).merged(patch)
         self._write_status(project_dir, status)
-        self._write_text(project_dir / "PROJECT_INDEX.md", render_project_index(status))
+        self._write_text(project_dir / self.PROJECT_CARD_FILE, render_project_card(status))
         self._write_text(project_dir / self.HUMAN_STATUS_FILE, render_claude_md(status))
         if refresh_contract:
             self._write_text(project_dir / status.contract_path, render_research_contract(status))
+        self._refresh_workspace_index()
         return self.snapshot(safe_id)
 
     def write_idea_discovery_outputs(
@@ -183,10 +189,11 @@ class ProjectWorkspaceService:
         status = status.merged(patch)
 
         self._write_status(project_dir, status)
-        self._write_text(project_dir / "PROJECT_INDEX.md", render_project_index(status))
+        self._write_text(project_dir / self.PROJECT_CARD_FILE, render_project_card(status))
         self._write_text(project_dir / self.HUMAN_STATUS_FILE, render_claude_md(status))
         self._write_text(project_dir / status.contract_path, render_research_contract(status, selected))
         self._write_text(project_dir / status.experiment_plan_path, render_experiment_plan(status, selected))
+        self._refresh_workspace_index()
         return self.snapshot(safe_id)
 
     def update_selected_idea_candidate(
@@ -244,10 +251,11 @@ class ProjectWorkspaceService:
             }
         )
         self._write_status(project_dir, status)
-        self._write_text(project_dir / "PROJECT_INDEX.md", render_project_index(status))
+        self._write_text(project_dir / self.PROJECT_CARD_FILE, render_project_card(status))
         self._write_text(project_dir / self.HUMAN_STATUS_FILE, render_claude_md(status))
         self._write_text(project_dir / status.contract_path, render_research_contract(status, candidate))
         self._write_text(project_dir / status.experiment_plan_path, render_experiment_plan(status, candidate))
+        self._refresh_workspace_index()
         return self.snapshot(safe_id)
 
     def read_text(self, project_id: str, relative_path: str) -> str:
@@ -281,6 +289,21 @@ class ProjectWorkspaceService:
             project_dir / self.STATUS_FILE,
             json.dumps(data, indent=2, ensure_ascii=False) + "\n",
         )
+
+    def _refresh_workspace_index(self) -> None:
+        statuses: list[ProjectStatus] = []
+        if self.root.exists():
+            for status_path in self.root.glob(f"*/{self.STATUS_FILE}"):
+                try:
+                    statuses.append(
+                        ProjectStatus(
+                            **json.loads(status_path.read_text(encoding="utf-8"))
+                        )
+                    )
+                except (OSError, json.JSONDecodeError, ValueError):
+                    continue
+        statuses.sort(key=lambda status: status.updated_at, reverse=True)
+        self._write_text(self.root / self.WORKSPACE_INDEX_FILE, render_workspace_index(statuses))
 
     @staticmethod
     def _write_text(path: Path, content: str) -> None:

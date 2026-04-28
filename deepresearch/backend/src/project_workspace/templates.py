@@ -7,12 +7,12 @@ import json
 from project_workspace.models import IdeaCandidate, ProjectStatus
 
 
-def render_project_index(status: ProjectStatus) -> str:
-    """Render the searchable top-level project index."""
+def render_project_card(status: ProjectStatus) -> str:
+    """Render the searchable per-project card."""
 
     name = status.name or status.topic
     description = status.description or status.next_action or status.topic
-    return f"""# Project Index
+    return f"""# Project Card
 
 Name: {name}
 Description: {description}
@@ -37,6 +37,37 @@ Description: {description}
 - refine-logs/EXPERIMENT_TRACKER.md
 - EXPERIMENT_LOG.md
 """
+
+
+def render_workspace_index(statuses: list[ProjectStatus]) -> str:
+    """Render the root-level index over all research projects."""
+
+    if not statuses:
+        return "# Project Index\n\nNo research projects yet.\n"
+
+    lines = [
+        "# Project Index",
+        "",
+        "This file is the workspace-level index for local research project recall.",
+        "",
+    ]
+    for status in statuses:
+        name = status.name or status.topic
+        description = status.description or status.next_action or status.topic
+        lines.extend(
+            [
+                f"## {name}",
+                "",
+                f"- project_id: {status.project_id}",
+                f"- description: {description}",
+                f"- topic: {status.topic}",
+                f"- stage: {status.stage.value}",
+                f"- selected_idea: {status.selected_idea or 'TBD'}",
+                f"- updated_at: {status.updated_at}",
+                "",
+            ]
+        )
+    return "\n".join(lines).rstrip() + "\n"
 
 
 def render_claude_md(status: ProjectStatus) -> str:
@@ -283,7 +314,6 @@ def render_review_state() -> str:
 
 
 STATIC_TEMPLATES = {
-    "PROJECT_INDEX.md": "# Project Index\n\nName: TBD\nDescription: TBD\n",
     "IDEA_REPORT.md": "# Idea Report\n\nNo idea discovery run has been recorded yet.\n",
     "IDEA_CANDIDATES.md": "# Idea Candidates\n\nNo candidates yet.\n",
     "AUTO_REVIEW.md": "# Auto Review\n\nNo external review rounds yet.\n",

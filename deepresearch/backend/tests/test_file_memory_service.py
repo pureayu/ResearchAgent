@@ -77,15 +77,17 @@ class FileMemoryServiceTests(unittest.TestCase):
         self.assertEqual([item["title"] for item in logs], ["Revise novelty", "Update baselines"])
         self.assertEqual(logs[0]["status"], "refine_plan")
 
-    def test_project_index_is_created_with_name_and_description(self) -> None:
+    def test_workspace_index_and_project_card_are_created_with_name_and_description(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             workspace = ProjectWorkspaceService(tmp)
             snapshot = workspace.create_project(topic="手机端大模型推理研究方向")
-            index_path = Path(snapshot.files["project_index"])
-            index_text = index_path.read_text(encoding="utf-8")
+            workspace_index_text = (Path(tmp) / "PROJECT_INDEX.md").read_text(encoding="utf-8")
+            card_text = Path(snapshot.files["project_card"]).read_text(encoding="utf-8")
 
-        self.assertIn("Name: 手机端大模型推理研究方向", index_text)
-        self.assertIn("Description: Research workspace for: 手机端大模型推理研究方向", index_text)
+        self.assertIn("## 手机端大模型推理研究方向", workspace_index_text)
+        self.assertIn("- project_id:", workspace_index_text)
+        self.assertIn("Name: 手机端大模型推理研究方向", card_text)
+        self.assertIn("Description: Research workspace for: 手机端大模型推理研究方向", card_text)
 
     def test_load_relevant_context_searches_local_project_index_and_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -120,7 +122,7 @@ class FileMemoryServiceTests(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
-            (related / "PROJECT_INDEX.md").write_text(
+            (related / "PROJECT_CARD.md").write_text(
                 "Name: Mobile LLM inference\nDescription: 手机端 NPU KV cache 和 speculative decoding 调研资料\n",
                 encoding="utf-8",
             )

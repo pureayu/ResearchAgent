@@ -256,6 +256,7 @@ class FileMemoryService:
 
     def _available_memory_files(self, project_dir: Path) -> list[str]:
         relative_paths = [
+            "PROJECT_CARD.md",
             "PROJECT_INDEX.md",
             "CLAUDE.md",
             "IDEA_REPORT.md",
@@ -323,6 +324,7 @@ class FileMemoryService:
     @staticmethod
     def _searchable_memory_files() -> list[str]:
         return [
+            "PROJECT_CARD.md",
             "PROJECT_INDEX.md",
             "CLAUDE.md",
             "IDEA_REPORT.md",
