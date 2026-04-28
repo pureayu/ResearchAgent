@@ -15,6 +15,7 @@ class TodoItem:
     title: str
     intent: str
     query: str
+    queries: list[str] = field(default_factory=list)
     round_id: int = field(default=1)
     origin: str = field(default="planner")
     parent_task_id: Optional[int] = field(default=None)
@@ -32,11 +33,16 @@ class TodoItem:
     needs_followup: bool = field(default=False)
     latest_query: Optional[str] = field(default=None)
     evidence_gap_reason: Optional[str] = field(default=None)
+    planned_capabilities: list[str] = field(default_factory=list)
+    current_capability: Optional[str] = field(default=None)
+    route_intent_label: Optional[str] = field(default=None)
+    route_confidence: float = field(default=0.0)
+    route_reason: Optional[str] = field(default=None)
 
 
 @dataclass(kw_only=True)
 class SummaryState:
-    recalled_context: dict | None = field(default=None)
+    recalled_context: dict | None = field(default=None)  # Default prompt-injected context; includes working memory and long-term memory, excludes task logs.
     session_id : Optional[str] = field(default=None)
     #记录每轮的id号， 一次完整研究流程的编号
     run_id: Optional[str] = field(default=None)

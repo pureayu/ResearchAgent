@@ -5,13 +5,17 @@ description = "Fully local web research and summarization assistant powered by H
 authors = [
     { name = "Lance Martin" }
 ]
-readme = "README.md"
+readme = { text = "ResearchAgent backend service.", content-type = "text/plain" }
 license = { text = "MIT" }
 requires-python = ">=3.10"
 dependencies = [
     "fastapi>=0.115.0",
-    "hello-agents==0.2.9",
     "httpx>=0.27.0",
+    "langchain>=1.2.13",
+    "langchain-ollama>=1.0.1",
+    "langchain-openai>=1.0.1",
+    "langgraph>=1.1.3",
+    "mcp>=1.27.0",
     "pdfplumber>=0.11.0",
     "PyMuPDF>=1.24.0",
     "tavily-python>=0.5.0",
@@ -32,7 +36,26 @@ requires = ["setuptools>=73.0.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-packages = ["src"]
+packages = [
+    "agent_runtime",
+    "execution",
+    "graph",
+    "llm",
+    "orchestrator",
+    "project_workspace",
+    "services",
+]
+py-modules = [
+    "agent",
+    "benchmarking",
+    "capability_types",
+    "config",
+    "main",
+    "models",
+    "prompts",
+    "source_types",
+    "utils",
+]
 
 [tool.setuptools.package-dir]
 "" = "src"

@@ -11,7 +11,10 @@ class SearchAPI(Enum):
     DUCKDUCKGO = "duckduckgo"
     SEARXNG = "searxng"
     ADVANCED = "advanced"
-    LOCAL_LIBRARY = "local_library"
+
+
+class AcademicSearchProvider(Enum):
+    ARXIV = "arxiv"
 
 
 class Configuration(BaseModel):
@@ -28,9 +31,14 @@ class Configuration(BaseModel):
         description="Maximum number of planner-generated tasks to keep",
     )
     max_research_rounds: int = Field(
-        default=2,
+        default=3,
         title="Research Rounds",
         description="Maximum number of planner/reviewer research rounds per run",
+    )
+    max_parallel_research_tasks: int = Field(
+        default=3,
+        title="Parallel Research Tasks",
+        description="Maximum number of same-round deep-research tasks to execute in parallel",
     )
     local_llm: str = Field(
         default="llama3.2",
@@ -47,6 +55,16 @@ class Configuration(BaseModel):
         title="Search API",
         description="Web search API to use",
     )
+    academic_search_provider: AcademicSearchProvider = Field(
+        default=AcademicSearchProvider.ARXIV,
+        title="Academic Search Provider",
+        description="Academic search provider used for paper metadata retrieval",
+    )
+    academic_search_timeout_seconds: float = Field(
+        default=6.0,
+        title="Academic Search Timeout",
+        description="Timeout in seconds for academic metadata lookups such as arXiv",
+    )
     enable_notes: bool = Field(
         default=True,
         title="Enable Notes",
@@ -57,20 +75,20 @@ class Configuration(BaseModel):
         title="Notes Workspace",
         description="Directory for NoteTool to persist task notes",
     )
-    memory_db_path: str = Field(
-        default="./data/memory.db",
-        title="Memory Database Path",
-        description="SQLite path for structured research memory persistence",
-    )
-    memory_backend: str = Field(
-        default="sqlite",
-        title="Memory Backend",
-        description="Structured memory backend to use: sqlite or postgres",
+    project_workspace_root: str = Field(
+        default="./research_projects",
+        title="Project Workspace Root",
+        description="Directory for ARIS-style project state files and templates",
     )
     memory_database_url: Optional[str] = Field(
         default=None,
         title="Memory Database URL",
         description="PostgreSQL connection URL for structured research memory persistence",
+    )
+    task_log_retention_per_session: int = Field(
+        default=40,
+        title="Task Log Retention Per Session",
+        description="Maximum number of task-log rows to retain per session",
     )
     fetch_full_page: bool = Field(
         default=True,
@@ -96,6 +114,16 @@ class Configuration(BaseModel):
         default=False,
         title="Use Tool Calling",
         description="Use tool calling instead of JSON mode for structured output",
+    )
+    enable_github_mcp: bool = Field(
+        default=False,
+        title="Enable GitHub MCP",
+        description="Whether to enable the GitHub repo capability backed by MCP.",
+    )
+    github_mcp_server_command: str = Field(
+        default="github-mcp-server",
+        title="GitHub MCP Server Command",
+        description="Command used to launch the local GitHub MCP Server over stdio.",
     )
     llm_api_key: Optional[str] = Field(
         default=None,
@@ -127,6 +155,26 @@ class Configuration(BaseModel):
         title="Embedding Base URL",
         description="Optional base URL for embedding requests",
     )
+    review_llm_provider: Optional[str] = Field(
+        default=None,
+        title="Review LLM Provider",
+        description="Optional provider override for the external reviewer model",
+    )
+    review_llm_model_id: Optional[str] = Field(
+        default=None,
+        title="Review LLM Model ID",
+        description="Optional model override for the external reviewer",
+    )
+    review_llm_api_key: Optional[str] = Field(
+        default=None,
+        title="Review LLM API Key",
+        description="Optional API key override for the external reviewer",
+    )
+    review_llm_base_url: Optional[str] = Field(
+        default=None,
+        title="Review LLM Base URL",
+        description="Optional base URL override for the external reviewer",
+    )
 
     @classmethod
     def from_env(cls, overrides: Optional[dict[str, Any]] = None) -> "Configuration":
@@ -150,21 +198,35 @@ class Configuration(BaseModel):
             "embedding_model": os.getenv("EMBEDDING_MODEL"),
             "embedding_api_key": os.getenv("EMBEDDING_API_KEY"),
             "embedding_base_url": os.getenv("EMBEDDING_BASE_URL"),
+            "review_llm_provider": os.getenv("REVIEW_LLM_PROVIDER"),
+            "review_llm_model_id": os.getenv("REVIEW_LLM_MODEL_ID")
+            or os.getenv("REVIEW_LLM_MODEL"),
+            "review_llm_api_key": os.getenv("REVIEW_LLM_API_KEY"),
+            "review_llm_base_url": os.getenv("REVIEW_LLM_BASE_URL"),
             "lmstudio_base_url": os.getenv("LMSTUDIO_BASE_URL"),
             "ollama_base_url": os.getenv("OLLAMA_BASE_URL"),
             "max_web_research_loops": os.getenv("MAX_WEB_RESEARCH_LOOPS"),
             "max_todo_items": os.getenv("MAX_TODO_ITEMS"),
             "max_research_rounds": os.getenv("MAX_RESEARCH_ROUNDS"),
+            "max_parallel_research_tasks": os.getenv("MAX_PARALLEL_RESEARCH_TASKS"),
             "fetch_full_page": os.getenv("FETCH_FULL_PAGE"),
             "strip_thinking_tokens": os.getenv("STRIP_THINKING_TOKENS"),
             "use_tool_calling": os.getenv("USE_TOOL_CALLING"),
+            "enable_github_mcp": os.getenv("ENABLE_GITHUB_MCP"),
+            "github_mcp_server_command": os.getenv("GITHUB_MCP_SERVER_COMMAND"),
             "search_api": os.getenv("SEARCH_API"),
+            "academic_search_provider": os.getenv("ACADEMIC_SEARCH_PROVIDER"),
+            "academic_search_timeout_seconds": os.getenv(
+                "ACADEMIC_SEARCH_TIMEOUT_SECONDS"
+            ),
             "enable_notes": os.getenv("ENABLE_NOTES"),
             "notes_workspace": os.getenv("NOTES_WORKSPACE"),
-            "memory_db_path": os.getenv("MEMORY_DB_PATH"),
-            "memory_backend": os.getenv("MEMORY_BACKEND"),
+            "project_workspace_root": os.getenv("PROJECT_WORKSPACE_ROOT"),
             "memory_database_url": os.getenv("MEMORY_DATABASE_URL")
             or os.getenv("DATABASE_URL"),
+            "task_log_retention_per_session": os.getenv(
+                "TASK_LOG_RETENTION_PER_SESSION"
+            ),
         }
 
         for key, value in env_aliases.items():
@@ -176,7 +238,6 @@ class Configuration(BaseModel):
                 if value is not None:
                     raw_values[key] = value
 
-        # Reuse paper_assistant-style OpenAI-compatible settings by default.
         # If a custom base URL is provided but no explicit provider is set,
         # avoid falling back to the local Ollama path.
         if raw_values.get("llm_base_url") and "llm_provider" not in raw_values:
@@ -202,20 +263,22 @@ class Configuration(BaseModel):
 
         return self.embedding_model
 
-    def resolved_memory_backend(self) -> str:
-        """Resolve the structured memory backend to use."""
-
-        backend = (self.memory_backend or "").strip().lower()
-        database_url = (self.memory_database_url or "").strip().lower()
-
-        if database_url.startswith(("postgres://", "postgresql://")):
-            return "postgres"
-        if backend in {"postgres", "postgresql"}:
-            return "postgres"
-        return "sqlite"
-
     def resolved_memory_database_url(self) -> Optional[str]:
         """Return the PostgreSQL connection URL when configured."""
 
         database_url = (self.memory_database_url or "").strip()
         return database_url or None
+
+    def reviewer_config(self) -> "Configuration":
+        """Return a config with reviewer-specific LLM overrides applied."""
+
+        overrides: dict[str, Any] = {}
+        if self.review_llm_provider:
+            overrides["llm_provider"] = self.review_llm_provider
+        if self.review_llm_model_id:
+            overrides["llm_model_id"] = self.review_llm_model_id
+        if self.review_llm_api_key:
+            overrides["llm_api_key"] = self.review_llm_api_key
+        if self.review_llm_base_url:
+            overrides["llm_base_url"] = self.review_llm_base_url
+        return self.model_copy(update=overrides)

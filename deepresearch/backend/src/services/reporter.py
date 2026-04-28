@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import json
 
-from hello_agents import ToolAwareSimpleAgent
-
+from agent_runtime.interfaces import AgentLike
 from models import SummaryState
 from config import Configuration
 from utils import strip_thinking_tokens
@@ -15,7 +14,7 @@ from services.text_processing import clean_task_summary, dedupe_markdown_blocks,
 class ReportingService:
     """Generates the final structured report."""
 
-    def __init__(self, report_agent: ToolAwareSimpleAgent, config: Configuration) -> None:
+    def __init__(self, report_agent: AgentLike, config: Configuration) -> None:
         self._agent = report_agent
         self._config = config
 
@@ -30,6 +29,7 @@ class ReportingService:
                 f"### 任务 {task.id}: {task.title}\n"
                 f"- 任务目标：{task.intent}\n"
                 f"- 检索查询：{task.query}\n"
+                f"- 多重检索：{'; '.join(task.queries or [task.query])}\n"
                 f"- 执行状态：{task.status}\n"
                 f"- 检索后端：{task.search_backend or 'unknown'}\n"
                 f"- 检索轮次：{task.attempt_count}\n"
@@ -67,6 +67,8 @@ class ReportingService:
         prompt = (
             f"研究主题：{state.research_topic}\n"
             "以下“任务事实表”和“来源事实表”是权威输入，优先级高于任务笔记，不得与其矛盾。\n"
+            "写作时请把它们当作事实校验材料，不要把这些表格原样搬进最终报告。\n"
+            "最终报告应以分析性正文为主，优先用长段落综合论证，而不是把信息拆成许多零碎短点。\n"
             f"任务事实表：\n{authoritative_status_section}\n\n"
             f"来源事实表：\n{authoritative_sources_section}\n\n"
             f"任务概览：\n{''.join(tasks_block)}\n"
@@ -84,11 +86,6 @@ class ReportingService:
 
         report_text = strip_tool_calls(report_text).strip()
         report_text = dedupe_markdown_blocks(report_text)
-        report_text = self._append_authoritative_appendix(
-            report_text,
-            authoritative_status_section=authoritative_status_section,
-            authoritative_sources_section=authoritative_sources_section,
-        )
 
         return report_text or "报告生成失败，请检查输入。"
 
