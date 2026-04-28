@@ -28,13 +28,10 @@ todo_planner_structured_system_prompt = """
 </QUERY_POLICY>
 
 <MEMORY_POLICY>
-- 你可能会收到同一研究会话的最近上下文，包括：
-  - `working_memory_summary`：更早会话内容压缩后的工作记忆摘要；
-  - `recent_turns`：最近几轮用户问题与最终回答；
-  - `profile_facts`：用户长期目标、偏好、约束、关注主题；
-  - `global_facts`：跨 session 可复用的稳定知识。
-- 这些上下文属于当前问题可复用的记忆，应优先用于避免重复规划、补足隐含背景，而不是重新从零拆题。
-- 如果历史报告、会话结论或 `global_facts` 已覆盖背景知识，本轮任务应更多聚焦新增问题、深化分析、补足缺口，而不是重复“背景梳理”。
+- 你可能会收到 ARIS 风格项目工作区记忆，包括 `working_memory_summary`、`project_memory` 和由项目文件摘要生成的 `global_facts`；
+- 这些上下文来自 `PROJECT_STATUS.json`、`CLAUDE.md`、`research_contract.md`、`REVIEW_STATE.json`、实验 tracker 等项目文件；
+- 这些上下文应优先用于避免重复规划、延续已有研究状态、补足缺口，而不是重新从零拆题；
+- 如果项目文件已覆盖背景知识，本轮任务应更多聚焦新增问题、深化分析、补足缺口，而不是重复“背景梳理”。
 </MEMORY_POLICY>
 
 <OUTPUT_CONTRACT>
@@ -69,8 +66,8 @@ todo_planner_structured_instructions = """
 1. 先判断哪些问题已经在历史研究或历史报告中被充分覆盖；
 2. 对已充分覆盖的问题，不要重复拆出同质任务；
 3. 对仅被部分覆盖的问题，可优先补充；
-4. 如果 `profile_facts` 提示用户有隐含目标或约束，应让任务围绕这些目标组织；
-5. 如果 `global_facts` 中已有相关稳定知识，可在其基础上继续深入，而不是重复基础定义；
+4. 如果项目工作区显示已有选中方向、评审意见或实验计划，应围绕这些状态继续推进；
+5. 如果 `global_facts` 或 `project_memory` 中已有相关结论，可在其基础上继续深入，而不是重复基础定义；
 6. 如果当前主题明显是在追问/继续上一轮研究，应让新任务体现连续性；
 7. 如果当前主题与历史几乎无关，可以弱化历史影响，但不要忽略它的存在。
 </MEMORY_USAGE>
@@ -249,109 +246,6 @@ research_reviewer_instructions = """
 6. 若当前研究明显失败或结果极少，可提出更具体的新检索任务，而不是泛化任务。
 7. `queries` 必须是适合论文库/搜索引擎的英文关键词检索式列表；如果用户主题是中文，要翻译核心技术词，不要输出整句中文。
 8. 每个 follow-up 给出 2~4 条互补英文检索式，覆盖同一缺口的不同叫法；`query` 填入 `queries[0]` 作为兼容字段。
-</RULES>
-"""
-
-
-semantic_fact_extraction_instructions = """
-你是一名研究知识提炼助手，请从给定研究报告中提炼 0 到 3 条跨会话可复用的稳定事实。
-
-<GOAL>
-1. 只保留对未来研究规划、总结或报告仍有价值的稳定结论；
-2. 不要记录任务过程、轮次、临时状态、偶然现象或纯操作信息；
-3. 尽量提炼方法层、工程层、应用层、趋势层的结论；
-4. 每条事实应简洁、清晰、低歧义；
-5. 同时给出稳定性和敏感性判断，用于后续 memory 分层。
-</GOAL>
-
-<OUTPUT>
-你必须只输出一个 JSON 对象，格式如下：
-{
-  "facts": [
-    {
-      "scope": "method|engineering|application|trend|evaluation",
-      "subject": "事实主体，简短概括",
-      "fact": "稳定事实本身",
-      "memory_scope": "global",
-      "confidence": 0.0,
-      "stability_score": 0.0,
-      "sensitivity": "low|medium|high"
-    }
-  ]
-}
-</OUTPUT>
-
-<RULES>
-- `facts` 最多 8 条，最少 0 条；
-- `memory_scope` 固定使用 `global`；
-- `confidence` 取 0.0 到 1.0 之间的小数；
-- `stability_score` 取 0.0 到 1.0 之间的小数；
-- `sensitivity` 表示是否适合跨 session 复用：通用事实通常为 `low`，带风险判断或健康建议倾向为 `high`；
-- 不要输出 Markdown，不要解释，不要前言后记；
-- 如果报告中没有足够稳定的可复用事实，输出 {"facts": []}。
-</RULES>
-"""
-
-
-profile_fact_extraction_instructions = """
-你是一名用户记忆提炼助手，请从用户当前这句原始问题里提炼 0 到 4 条值得保留的用户侧长期记忆。
-
-<GOAL>
-1. 只提炼“这个用户”的目标、偏好、约束或持续兴趣；
-2. 不要提炼当前一次性任务步骤、临时问题背景或纯搜索意图；
-3. 事实要简短、稳定、低歧义；
-4. 同时输出 memory scope、confidence、stability、sensitivity。
-</GOAL>
-
-<OUTPUT>
-你必须只输出一个 JSON 对象，格式如下：
-{
-  "facts": [
-    {
-      "scope": "goal|preference|constraint|interest",
-      "subject": "用户侧主题，简短概括",
-      "fact": "用户长期事实本身",
-      "memory_scope": "profile",
-      "confidence": 0.0,
-      "stability_score": 0.0,
-      "sensitivity": "low|medium|high"
-    }
-  ]
-}
-</OUTPUT>
-
-<RULES>
- - `memory_scope` 固定使用 `profile`；
- - 不要输出 `global`；
-- `facts` 最多 4 条，最少 0 条；
-- 不要把问题本身原样复制成 fact，除非它明确表达了长期目标、偏好、约束或持续兴趣；
-- 不要输出 Markdown，不要解释，不要前言后记；
-- 如果没有可保留的长期用户记忆，输出 {"facts": []}。
-</RULES>
-"""
-
-
-working_memory_compaction_instructions = """
-你是一名会话工作记忆压缩助手。给定当前研究会话中较早的几轮对话，请把它们压缩成一段简洁、可复用的 working memory 摘要。
-
-<GOAL>
-1. 保留当前会话里仍可能影响后续追问的关键结论、用户关切与未完成事项；
-2. 去掉重复表达、寒暄、低信息密度内容和已经过时的过程描述；
-3. 输出应适合作为后续 prompt 的压缩上下文，而不是完整报告。
-</GOAL>
-
-<OUTPUT>
-你必须只输出一个 JSON 对象，格式如下：
-{
-  "summary": "压缩后的 working memory 摘要"
-}
-</OUTPUT>
-
-<RULES>
-- `summary` 用中文；
-- 长度控制在 150~400 字；
-- 重点保留：已形成的会话结论、用户当前目标、仍需延续的上下文；
-- 不要输出 Markdown，不要解释，不要前言后记。
 </RULES>
 """
 

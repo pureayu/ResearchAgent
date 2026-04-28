@@ -108,7 +108,7 @@
 ## 当前决策
 
 - 不先重写前端
-- 不先替换 `MemoryService`
+- 保留 `recalled_context` 接口，但将数据库式 `MemoryService` 收敛为 ARIS 风格文件记忆
 - 不先并行化 todo task fan-out
 - 不把 LangChain agent 黑盒塞进现有工作流
 
@@ -133,6 +133,6 @@
 
 ### 尚未完成
 
-- 在真实 `MEMORY_DATABASE_URL` 环境下跑完整的端到端回归
+- 在真实项目工作区文件存在时跑完整的端到端回归
 - 将 summarizer / reporter 的 note 协议进一步收敛成更标准的 LangChain tool bridge
 - 进一步降低 orchestrator 中残留的 graph node glue code

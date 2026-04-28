@@ -309,13 +309,13 @@ def create_app() -> FastAPI:
 
         logger.info(
             "DeepResearch configuration loaded: provider=%s model=%s base_url=%s search_api=%s "
-            "memory_database_url=%s "
+            "project_workspace_root=%s "
             "max_loops=%s fetch_full_page=%s tool_calling=%s strip_thinking=%s api_key=%s",
             config.llm_provider,
             config.resolved_model() or "unset",
             base_url,
             (config.search_api.value if isinstance(config.search_api, SearchAPI) else config.search_api),
-            _mask_secret(config.resolved_memory_database_url()),
+            config.project_workspace_root,
             config.max_web_research_loops,
             config.fetch_full_page,
             config.use_tool_calling,

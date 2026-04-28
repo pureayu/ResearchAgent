@@ -682,19 +682,6 @@ class DeepResearchAgent:
         }
         self._capture_profile_memory(state)
         self.memory_service.save_report_memory(state.run_id, state, report)
-        if state.response_mode == RESPONSE_MODE_DEEP_RESEARCH:
-            self._emit_event(
-                {
-                    "type": "status",
-                    "message": "最终报告已生成，正在沉淀语义记忆",
-                    "response_mode": state.response_mode,
-                }
-            )
-            self.memory_service.consolidate_semantic_facts(
-                state.run_id,
-                state.research_topic,
-                report,
-            )
         if note_event:
             self._emit_event(note_event)
 

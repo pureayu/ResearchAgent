@@ -242,7 +242,7 @@
 目标：
 
 - 保留现有 FastAPI API 与 SSE 事件格式
-- 保留 `ResearchTaskExecutor`、`MemoryService`、capability 执行链
+- 保留 `ResearchTaskExecutor`、文件记忆适配层、capability 执行链
 - 引入 LangChain model factory
 - 优先把以下角色迁到 structured output：
   - planner

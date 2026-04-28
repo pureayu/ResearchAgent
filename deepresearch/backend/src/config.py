@@ -80,16 +80,6 @@ class Configuration(BaseModel):
         title="Project Workspace Root",
         description="Directory for ARIS-style project state files and templates",
     )
-    memory_database_url: Optional[str] = Field(
-        default=None,
-        title="Memory Database URL",
-        description="PostgreSQL connection URL for structured research memory persistence",
-    )
-    task_log_retention_per_session: int = Field(
-        default=40,
-        title="Task Log Retention Per Session",
-        description="Maximum number of task-log rows to retain per session",
-    )
     fetch_full_page: bool = Field(
         default=True,
         title="Fetch Full Page",
@@ -129,21 +119,6 @@ class Configuration(BaseModel):
         default=None,
         title="LLM Model ID",
         description="Optional model identifier for custom OpenAI-compatible services",
-    )
-    embedding_model: Optional[str] = Field(
-        default=None,
-        title="Embedding Model ID",
-        description="Optional embedding model identifier for semantic memory retrieval",
-    )
-    embedding_api_key: Optional[str] = Field(
-        default=None,
-        title="Embedding API Key",
-        description="Optional API key for embedding requests",
-    )
-    embedding_base_url: Optional[str] = Field(
-        default=None,
-        title="Embedding Base URL",
-        description="Optional base URL for embedding requests",
     )
     review_llm_provider: Optional[str] = Field(
         default=None,
@@ -185,9 +160,6 @@ class Configuration(BaseModel):
             "llm_api_key": os.getenv("LLM_API_KEY"),
             "llm_model_id": os.getenv("LLM_MODEL_ID") or os.getenv("LLM_MODEL"),
             "llm_base_url": os.getenv("LLM_BASE_URL"),
-            "embedding_model": os.getenv("EMBEDDING_MODEL"),
-            "embedding_api_key": os.getenv("EMBEDDING_API_KEY"),
-            "embedding_base_url": os.getenv("EMBEDDING_BASE_URL"),
             "review_llm_provider": os.getenv("REVIEW_LLM_PROVIDER"),
             "review_llm_model_id": os.getenv("REVIEW_LLM_MODEL_ID")
             or os.getenv("REVIEW_LLM_MODEL"),
@@ -210,11 +182,6 @@ class Configuration(BaseModel):
             "enable_notes": os.getenv("ENABLE_NOTES"),
             "notes_workspace": os.getenv("NOTES_WORKSPACE"),
             "project_workspace_root": os.getenv("PROJECT_WORKSPACE_ROOT"),
-            "memory_database_url": os.getenv("MEMORY_DATABASE_URL")
-            or os.getenv("DATABASE_URL"),
-            "task_log_retention_per_session": os.getenv(
-                "TASK_LOG_RETENTION_PER_SESSION"
-            ),
         }
 
         for key, value in env_aliases.items():
@@ -245,17 +212,6 @@ class Configuration(BaseModel):
         """Best-effort resolution of the model identifier to use."""
 
         return self.llm_model_id or self.local_llm
-
-    def resolved_embedding_model(self) -> Optional[str]:
-        """Best-effort resolution of the embedding model identifier to use."""
-
-        return self.embedding_model
-
-    def resolved_memory_database_url(self) -> Optional[str]:
-        """Return the PostgreSQL connection URL when configured."""
-
-        database_url = (self.memory_database_url or "").strip()
-        return database_url or None
 
     def reviewer_config(self) -> "Configuration":
         """Return a config with reviewer-specific LLM overrides applied."""

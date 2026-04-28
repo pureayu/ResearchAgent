@@ -1,526 +1,44 @@
-"""Structured memory service skeleton for the deep research workflow."""
+"""ARIS-style file memory for the deep research workflow.
+
+This module intentionally avoids a database-backed long-term memory. The durable
+memory source is the project workspace on disk: PROJECT_STATUS.json, CLAUDE.md,
+research_contract.md, review state, and experiment trackers.
+"""
 
 from __future__ import annotations
 
 import json
 import logging
-import re
-from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-import httpx
-from openai import OpenAI
-
-try:
-    import psycopg
-    from psycopg.rows import dict_row
-except ImportError:
-    psycopg = None
-    dict_row = None
-
 from config import Configuration
 from models import SummaryState, TodoItem
-from prompts import (
-    profile_fact_extraction_instructions,
-    semantic_fact_extraction_instructions,
-    working_memory_compaction_instructions,
-)
 
-GLOBAL_MEMORY_SCOPE = "global"
-PROFILE_MEMORY_SCOPE = "profile"
-LOW_SENSITIVITY = "low"
-MEDIUM_SENSITIVITY = "medium"
-HIGH_SENSITIVITY = "high"
-
-GLOBAL_PROMOTION_CONFIDENCE = 0.85
-GLOBAL_PROMOTION_STABILITY = 0.80
-MEMORY_CANDIDATE_LIMIT = 8
-MEMORY_RESULT_LIMIT = 5
-PROFILE_EXTRACTION_LIMIT = 4
-SEMANTIC_EXTRACTION_LIMIT = 8
 logger = logging.getLogger(__name__)
-WORKING_MEMORY_RECENT_TURN_LIMIT = 3
-WORKING_MEMORY_HISTORY_LIMIT = 12
 
-MEDICAL_MEMORY_KEYWORDS = {
-    "药",
-    "药品",
-    "药物",
-    "用药",
-    "服药",
-    "褪黑素",
-    "副作用",
-    "禁忌",
-    "失眠",
-    "睡眠",
-    "智齿",
-    "拔牙",
-    "口腔",
-    "症状",
-    "疾病",
-    "治疗",
-    "医疗",
-}
 
-class BaseMemoryService:
-    """Shared semantic-memory helpers for the PostgreSQL-backed memory service."""
+class FileMemoryService:
+    """Lightweight memory adapter backed by ARIS-style project files."""
+
+    STATUS_FILE = "PROJECT_STATUS.json"
 
     def __init__(self, config: Configuration) -> None:
         self._config = config
-        self._llm_client, self._llm_model = self._build_llm_client()
-        self._embedding_client, self._embedding_model = self._build_embedding_client()
-
-    def _build_llm_client(self) -> tuple[OpenAI | None, str | None]:
-        """Create an OpenAI-compatible client for semantic fact extraction."""
-
-        provider = (self._config.llm_provider or "").strip()
-        model = self._config.resolved_model()
-        base_url = self._config.llm_base_url
-        api_key = self._config.llm_api_key
-
-        if provider == "ollama":
-            base_url = self._config.sanitized_ollama_url()
-            api_key = api_key or "ollama"
-        elif provider == "lmstudio":
-            base_url = self._config.lmstudio_base_url
-
-        if not model or not base_url:
-            return None, model
-
-        http_client = httpx.Client(timeout=120.0, trust_env=False)
-        return OpenAI(
-            api_key=api_key or "dummy",
-            base_url=base_url,
-            timeout=120.0,
-            http_client=http_client,
-        ), model
-
-    def _build_embedding_client(self) -> tuple[OpenAI | None, str | None]:
-        """Create an OpenAI-compatible client for embedding-based retrieval."""
-
-        model = self._config.resolved_embedding_model()
-        base_url = self._config.embedding_base_url or self._config.llm_base_url
-        api_key = self._config.embedding_api_key or self._config.llm_api_key
-
-        if not model or not base_url:
-            return None, model
-
-        http_client = httpx.Client(timeout=120.0, trust_env=False)
-        return OpenAI(
-            api_key=api_key or "dummy",
-            base_url=base_url,
-            timeout=120.0,
-            http_client=http_client,
-        ), model
-
-    def capture_profile_memory(
-        self,
-        run_id: str,
-        session_id: str,
-        topic: str,
-    ) -> list[dict[str, Any]]:
-        """Extract and persist model-derived profile facts from the raw user topic."""
-
-        facts = self.extract_profile_facts(topic)
-        self.save_semantic_facts(
-            run_id,
-            topic,
-            facts,
-            session_id=session_id,
-        )
-        return facts
-
-    def extract_profile_facts(self, topic: str) -> list[dict[str, Any]]:
-        """Derive user-goal/profile facts from the raw query with the configured LLM."""
-
-        if not topic.strip():
-            return []
-
-        payload = self._run_json_completion(
-            system_prompt=profile_fact_extraction_instructions,
-            user_content=f"用户原始问题：{topic}",
-        )
-        candidate_facts = payload.get("facts") if isinstance(payload, dict) else None
-        return self._normalize_extracted_facts(
-            candidate_facts,
-            fallback_subject=topic,
-            default_memory_scope=PROFILE_MEMORY_SCOPE,
-            limit=PROFILE_EXTRACTION_LIMIT,
-        )
-    #从一次研究最终产出的 report 里，抽取“长期可复用的稳定事实”，然后准备存进 memory。
-    def extract_semantic_facts(self, report: str, topic: str) -> list[dict[str, Any]]:
-        """Extract stable semantic facts from the final report."""
-
-        if not report.strip():
-            return []
-
-        payload = self._run_json_completion(
-            system_prompt=semantic_fact_extraction_instructions,
-            user_content=f"研究主题：{topic}\n\n研究报告：\n{report}",
-        )
-        candidate_facts = payload.get("facts") if isinstance(payload, dict) else None
-        return self._normalize_extracted_facts(
-            candidate_facts,
-            fallback_subject=topic,
-            limit=SEMANTIC_EXTRACTION_LIMIT,
-        )
-
-    def _run_json_completion(
-        self,
-        *,
-        system_prompt: str,
-        user_content: str,
-    ) -> dict[str, Any] | list | None:
-        """Run a deterministic JSON-only completion and parse the first JSON payload."""
-
-        if self._llm_client is None or not self._llm_model:
-            return None
-
-        messages = [
-            {"role": "system", "content": system_prompt.strip()},
-            {"role": "user", "content": user_content},
-        ]
-
-        try:
-            response = self._llm_client.chat.completions.create(
-                model=self._llm_model,
-                messages=messages,
-                temperature=0.0,
-            )
-        except Exception:
-            return None
-
-        content = (response.choices[0].message.content or "").strip()
-        return self._extract_json_payload(content)
-
-    def _normalize_extracted_facts(
-        self,
-        candidate_facts: Any,
-        *,
-        fallback_subject: str,
-        limit: int,
-        default_memory_scope: str | None = None,
-    ) -> list[dict[str, Any]]:
-        """Normalize fact objects emitted by LLM extraction prompts."""
-
-        if not isinstance(candidate_facts, list):
-            return []
-
-        facts: list[dict[str, Any]] = []
-        for item in candidate_facts[:limit]:
-            if not isinstance(item, dict):
-                continue
-            fact_text = str(item.get("fact") or "").strip()
-            if not fact_text:
-                continue
-            confidence = self._clamp_score(item.get("confidence"), default=0.0)
-            stability_score = self._clamp_score(
-                item.get("stability_score"),
-                default=confidence,
-            )
-            sensitivity = self._normalize_sensitivity(item.get("sensitivity"))
-            memory_scope = self._normalize_memory_scope(item.get("memory_scope"))
-            if memory_scope is None:
-                memory_scope = default_memory_scope
-            facts.append(
-                {
-                    "scope": str(item.get("scope") or "").strip() or None,
-                    "subject": str(item.get("subject") or "").strip() or fallback_subject,
-                    "fact": fact_text,
-                    "confidence": confidence,
-                    "stability_score": stability_score,
-                    "sensitivity": sensitivity,
-                    "memory_scope": memory_scope,
-                }
-            )
-
-        return facts
-
-    def _clamp_score(self, value: Any, *, default: float) -> float:
-        """Convert numeric fields into the closed interval [0, 1]."""
-
-        try:
-            resolved = float(value if value is not None else default)
-        except (TypeError, ValueError):
-            resolved = default
-        return min(max(resolved, 0.0), 1.0)
-
-    def _normalize_sensitivity(self, value: Any) -> str | None:
-        """Normalize sensitivity labels from LLM outputs."""
-
-        sensitivity = str(value or "").strip().lower()
-        if sensitivity in {LOW_SENSITIVITY, MEDIUM_SENSITIVITY, HIGH_SENSITIVITY}:
-            return sensitivity
-        return None
-
-    def _normalize_memory_scope(self, value: Any) -> str | None:
-        """Normalize memory scope labels from LLM outputs."""
-
-        memory_scope = str(value or "").strip().lower()
-        if memory_scope in {GLOBAL_MEMORY_SCOPE, PROFILE_MEMORY_SCOPE}:
-            return memory_scope
-        return None
-
-    def _embed_texts(self, texts: list[str]) -> list[list[float]]:
-        """Embed a batch of texts for semantic retrieval."""
-
-        if not texts or self._embedding_client is None or not self._embedding_model:
-            return []
-
-        try:
-            response = self._embedding_client.embeddings.create(
-                model=self._embedding_model,
-                input=texts,
-            )
-        except Exception:
-            return []
-
-        return [item.embedding for item in response.data]
-
-    def _embed_query(self, text: str) -> list[float] | None:
-        """Embed a single query string."""
-
-        embeddings = self._embed_texts([text])
-        return embeddings[0] if embeddings else None
-
-    def consolidate_semantic_facts(
-        self,
-        run_id: str,
-        topic: str,
-        report: str,
-    ) -> list[dict[str, Any]]:
-        """Extract and persist global semantic facts derived from a final report."""
-
-        facts = self.extract_semantic_facts(report, topic)
-        global_facts = [
-            item
-            for item in facts
-            if self._guardrail_memory_scope(
-                requested_scope=self._normalize_memory_scope(item.get("memory_scope")),
-                topic=topic,
-                subject=str(item.get("subject") or "").strip() or topic,
-                fact=str(item.get("fact") or "").strip(),
-                confidence=self._clamp_score(item.get("confidence"), default=0.0),
-                stability_score=self._clamp_score(
-                    item.get("stability_score"),
-                    default=self._clamp_score(item.get("confidence"), default=0.0),
-                ),
-                sensitivity=(
-                    self._normalize_sensitivity(item.get("sensitivity"))
-                    or self._infer_fact_sensitivity(
-                        topic,
-                        str(item.get("subject") or "").strip() or topic,
-                        str(item.get("fact") or "").strip(),
-                    )
-                ),
-            )
-            == GLOBAL_MEMORY_SCOPE
-        ]
-        self.save_semantic_facts(run_id, topic, global_facts)
-        return global_facts
-
-    def build_working_memory_summary(
-        self,
-        *,
-        session_topic: str,
-        older_turns: list[dict[str, Any]],
-    ) -> str:
-        """Summarize older session turns into a compact working-memory block."""
-
-        if not older_turns:
-            return ""
-
-        serialized_turns: list[str] = []
-        for idx, turn in enumerate(older_turns, start=1):
-            user_query = str(turn.get("user_query") or "").strip()
-            assistant_response = str(turn.get("assistant_response") or "").strip()
-            response_mode = str(turn.get("response_mode") or "").strip() or "unknown"
-            created_at = str(turn.get("created_at") or "").strip()
-            serialized_turns.append(
-                "\n".join(
-                    [
-                        f"[历史轮次 {idx}]",
-                        f"- 时间：{created_at[:19] if created_at else 'unknown'}",
-                        f"- 模式：{response_mode}",
-                        f"- 用户问题：{user_query[:300]}",
-                        f"- 最终回答：{assistant_response[:700]}",
-                    ]
-                )
-            )
-
-        payload = self._run_json_completion(
-            system_prompt=working_memory_compaction_instructions,
-            user_content=(
-                f"会话主题：{session_topic}\n\n"
-                "需要压缩的历史轮次：\n"
-                + "\n\n".join(serialized_turns)
-            ),
-        )
-        if isinstance(payload, dict):
-            summary = str(payload.get("summary") or "").strip()
-            if summary:
-                return summary
-
-        fallback_lines = ["历史工作记忆摘要："]
-        for idx, turn in enumerate(older_turns[:5], start=1):
-            user_query = str(turn.get("user_query") or "").strip()
-            assistant_response = str(turn.get("assistant_response") or "").strip()
-            fallback_lines.append(
-                f"{idx}. 问题：{user_query[:120]}；结论：{assistant_response[:200]}"
-            )
-        return "\n".join(fallback_lines)
-    #代码规范化，合法化检查以及memory_scope检查
-    def _prepare_semantic_fact(
-        self,
-        topic: str,
-        item: dict[str, Any],
-        *,
-        session_id: str | None,
-    ) -> dict[str, Any]:
-        """Normalize fact metadata and apply minimal scope/sensitivity guardrails."""
-
-        fact_text = str(item.get("fact") or "").strip()
-        subject = str(item.get("subject") or "").strip() or topic
-        scope = str(item.get("scope") or "").strip() or None
-        confidence = self._clamp_score(item.get("confidence"), default=0.0)
-        stability_score = self._clamp_score(
-            item.get("stability_score"),
-            default=confidence,
-        )
-        sensitivity = self._normalize_sensitivity(item.get("sensitivity"))
-        if sensitivity is None:
-            sensitivity = self._infer_fact_sensitivity(topic, subject, fact_text)
-
-        memory_scope = self._guardrail_memory_scope(
-            requested_scope=self._normalize_memory_scope(item.get("memory_scope")),
-            topic=topic,
-            subject=subject,
-            fact=fact_text,
-            confidence=confidence,
-            stability_score=stability_score,
-            sensitivity=sensitivity,
-        )
-
-        return {
-            "scope": scope,
-            "subject": subject,
-            "fact": fact_text,
-            "confidence": confidence,
-            "stability_score": stability_score,
-            "sensitivity": sensitivity,
-            "memory_scope": memory_scope,
-            "source_session_id": session_id,
-        }
-
-    def _guardrail_memory_scope(
-        self,
-        *,
-        requested_scope: str | None,
-        topic: str,
-        subject: str,
-        fact: str,
-        confidence: float,
-        stability_score: float,
-        sensitivity: str,
-    ) -> str:
-        """Apply minimal scope guardrails while keeping model-produced scope as primary."""
-
-        memory_scope = requested_scope or PROFILE_MEMORY_SCOPE
-        if (
-            memory_scope == GLOBAL_MEMORY_SCOPE
-            and (
-                sensitivity != LOW_SENSITIVITY
-                or confidence < GLOBAL_PROMOTION_CONFIDENCE
-                or stability_score < GLOBAL_PROMOTION_STABILITY
-                or self._is_medical_or_drug_text(topic, subject, fact)
-            )
-        ):
-            return PROFILE_MEMORY_SCOPE
-        return memory_scope
-
-    def _infer_fact_sensitivity(self, topic: str, subject: str, fact: str) -> str:
-        """Infer a conservative fallback sensitivity label when the model omits one."""
-
-        if self._is_medical_or_drug_text(topic, subject, fact):
-            return HIGH_SENSITIVITY
-        return MEDIUM_SENSITIVITY
-
-    def _is_medical_or_drug_text(self, *texts: str) -> bool:
-        """Return whether text belongs to the conservative medical/drug domain."""
-
-        merged = " ".join(texts).lower()
-        return any(token in merged for token in MEDICAL_MEMORY_KEYWORDS)
-
-    def _sorted_fact_candidates(
-        self,
-        candidates: list[dict[str, Any]],
-    ) -> list[dict[str, Any]]:
-        """Deterministically rank fact candidates for direct recall use."""
-
-        return sorted(
-            candidates,
-            key=self._fact_sort_key,
-            reverse=True,
-        )
-
-    def _fact_sort_key(self, item: dict[str, Any]) -> tuple[float, float, float, float]:
-        """Sort by similarity first, then confidence, stability, and recency."""
-
-        return (
-            self._clamp_score(item.get("similarity"), default=0.0),
-            self._clamp_score(item.get("confidence"), default=0.0),
-            self._clamp_score(item.get("stability_score"), default=0.0),
-            self._timestamp_sort_value(item.get("last_verified_at")),
-        )
-
-    def _timestamp_sort_value(self, value: Any) -> float:
-        """Convert timestamps into sortable floats for deterministic fallback ranking."""
-
-        if isinstance(value, datetime):
-            return value.timestamp()
-        if isinstance(value, str):
-            normalized = value.replace("Z", "+00:00")
-            try:
-                return datetime.fromisoformat(normalized).timestamp()
-            except ValueError:
-                return 0.0
-        return 0.0
-
-    def _extract_json_payload(self, text: str) -> dict[str, Any] | list | None:
-        """Best-effort extraction of a JSON object or array from model output."""
-
-        start = text.find("{")
-        end = text.rfind("}")
-        if start != -1 and end != -1 and end > start:
-            candidate = text[start : end + 1]
-            try:
-                return json.loads(candidate)
-            except json.JSONDecodeError:
-                return None
-
-        start = text.find("[")
-        end = text.rfind("]")
-        if start != -1 and end != -1 and end > start:
-            candidate = text[start : end + 1]
-            try:
-                return json.loads(candidate)
-            except json.JSONDecodeError:
-                return None
-
-        return None
-
-
-class NoOpMemoryService(BaseMemoryService):
-    """Memory backend used when no persistent memory database is configured."""
+        self._root = Path(config.project_workspace_root).expanduser().resolve()
 
     def get_or_create_session(self, session_id: str | None, topic: str) -> str:
+        """Use the project id as session id when provided; otherwise create an ephemeral id."""
+
         del topic
-        return session_id or uuid4().hex
+        return str(session_id or uuid4().hex)
 
     def start_run(self, session_id: str, topic: str) -> str:
-        del session_id, topic
-        return uuid4().hex
+        """Create a run id without persisting an extra database row."""
+
+        del topic
+        return f"{session_id}-{uuid4().hex[:8]}"
 
     def load_relevant_context(
         self,
@@ -529,12 +47,25 @@ class NoOpMemoryService(BaseMemoryService):
         *,
         exclude_run_id: str | None = None,
     ) -> dict[str, Any]:
-        del session_id, topic, exclude_run_id
+        """Load a compact project-memory snapshot for planner injection."""
+
+        del exclude_run_id
+        project_summaries = self._load_project_summaries(session_id=session_id, topic=topic)
+        working_memory_summary = self._format_working_memory(project_summaries)
         return {
-            "working_memory_summary": "",
+            "working_memory_summary": working_memory_summary,
             "recent_turns": [],
             "profile_facts": [],
-            "global_facts": [],
+            "global_facts": [
+                {
+                    "fact_id": item["project_id"],
+                    "fact": item["summary"],
+                    "memory_scope": "project",
+                    "source": item["root_path"],
+                }
+                for item in project_summaries
+            ],
+            "project_memory": project_summaries,
         }
 
     def load_recent_task_logs(
@@ -544,21 +75,58 @@ class NoOpMemoryService(BaseMemoryService):
         exclude_run_id: str | None = None,
         limit: int = 5,
     ) -> list[dict[str, Any]]:
-        del session_id, exclude_run_id, limit
-        return []
+        """Expose project active tasks as history-recall task logs."""
+
+        del exclude_run_id
+        if not session_id:
+            return []
+
+        status = self._read_status_for_project(session_id)
+        if not status:
+            return []
+
+        active_tasks = status.get("active_tasks") or []
+        if not isinstance(active_tasks, list):
+            active_tasks = []
+
+        rows: list[dict[str, Any]] = []
+        for idx, task in enumerate(active_tasks[: max(0, limit)], start=1):
+            rows.append(
+                {
+                    "run_id": str(session_id),
+                    "task_id": idx,
+                    "title": str(task),
+                    "status": str(status.get("stage") or "unknown"),
+                    "summary": str(status.get("next_action") or ""),
+                    "created_at": str(status.get("updated_at") or status.get("created_at") or ""),
+                }
+            )
+        return rows
 
     def save_task_log(self, run_id: str, task: TodoItem) -> None:
+        """Task logs are persisted by project workspace files, not by this adapter."""
+
         del run_id, task
 
     def save_report_memory(self, run_id: str, state: SummaryState, report: str) -> None:
+        """Project reports are written by ProjectWorkspaceService."""
+
         del run_id, state, report
 
     def save_session_turn(self, state: SummaryState, assistant_response: str) -> None:
+        """No database turn table is maintained in ARIS-style file memory."""
+
         del state, assistant_response
 
     def refresh_working_memory(self, session_id: str | None) -> dict[str, Any]:
-        del session_id
-        return {"working_memory_summary": "", "recent_turns": []}
+        """Refresh project-memory context after a run."""
+
+        project_summaries = self._load_project_summaries(session_id=session_id, topic="")
+        return {
+            "working_memory_summary": self._format_working_memory(project_summaries),
+            "recent_turns": [],
+            "project_memory": project_summaries,
+        }
 
     def capture_profile_memory(
         self,
@@ -566,987 +134,146 @@ class NoOpMemoryService(BaseMemoryService):
         session_id: str,
         topic: str,
     ) -> None:
+        """User-profile memory is intentionally not persisted."""
+
         del run_id, session_id, topic
 
-    def consolidate_semantic_facts(
+    def _load_project_summaries(
         self,
-        run_id: str,
-        topic: str,
-        report: str,
-    ) -> None:
-        del run_id, topic, report
-
-    def save_semantic_facts(
-        self,
-        run_id: str,
-        topic: str,
-        facts: list[dict[str, Any]],
         *,
-        session_id: str | None = None,
-        default_memory_scope: str | None = None,
-    ) -> None:
-        del run_id, topic, facts, session_id, default_memory_scope
-
-
-def create_memory_service(config: Configuration) -> BaseMemoryService:
-    """Return persistent memory when configured, otherwise safe no-op memory."""
-
-    if config.resolved_memory_database_url():
-        try:
-            return MemoryService(config)
-        except Exception as exc:
-            logger.warning(
-                "Persistent memory unavailable; falling back to no-op memory: %s",
-                exc,
-            )
-    return NoOpMemoryService(config)
-
-
-class MemoryService(BaseMemoryService):
-    """PostgreSQL + pgvector implementation for structured research memory."""
-
-    def __init__(self, config: Configuration) -> None:
-        super().__init__(config)
-        self._database_url = config.resolved_memory_database_url()
-        if not self._database_url:
-            raise ValueError(
-                "MEMORY_DATABASE_URL is required for the PostgreSQL memory service"
-            )
-        if psycopg is None or dict_row is None:
-            raise RuntimeError(
-                "psycopg is required for the PostgreSQL memory backend. "
-                "Install backend dependencies before starting the service."
-            )
-        self._init_db()
-
-    @property
-    def database_url(self) -> str:
-        """Return the configured PostgreSQL URL."""
-
-        return self._database_url
-
-    def _connect(self) -> Any:
-        """Open a PostgreSQL connection for memory operations."""
-
-        return psycopg.connect(self._database_url, row_factory=dict_row)
-
-    def _init_db(self) -> None:
-        """Create the PostgreSQL tables and pgvector extension if needed."""
-
-        with self._connect() as connection:
-            connection.execute("CREATE EXTENSION IF NOT EXISTS vector")
-            connection.execute(
-                """
-                CREATE TABLE IF NOT EXISTS research_sessions (
-                    session_id TEXT PRIMARY KEY,
-                    topic TEXT NOT NULL,
-                    created_at TIMESTAMPTZ NOT NULL,
-                    updated_at TIMESTAMPTZ NOT NULL,
-                    last_run_id TEXT,
-                    working_memory_summary TEXT
-                )
-                """
-            )
-            connection.execute(
-                """
-                CREATE TABLE IF NOT EXISTS research_runs (
-                    run_id TEXT PRIMARY KEY,
-                    session_id TEXT NOT NULL,
-                    topic TEXT NOT NULL,
-                    started_at TIMESTAMPTZ NOT NULL,
-                    finished_at TIMESTAMPTZ,
-                    final_report TEXT,
-                    report_note_id TEXT,
-                    task_count INTEGER DEFAULT 0
-                )
-                """
-            )
-            connection.execute(
-                """
-                CREATE TABLE IF NOT EXISTS session_turns (
-                    turn_id TEXT PRIMARY KEY,
-                    session_id TEXT NOT NULL,
-                    run_id TEXT NOT NULL,
-                    user_query TEXT NOT NULL,
-                    assistant_response TEXT NOT NULL,
-                    response_mode TEXT NOT NULL,
-                    created_at TIMESTAMPTZ NOT NULL
-                )
-                """
-            )
-            connection.execute(
-                """
-                CREATE TABLE IF NOT EXISTS task_memories (
-                    id BIGSERIAL PRIMARY KEY,
-                    run_id TEXT NOT NULL,
-                    task_id INTEGER NOT NULL,
-                    title TEXT NOT NULL,
-                    intent TEXT NOT NULL,
-                    query TEXT NOT NULL,
-                    round_id INTEGER DEFAULT 1,
-                    origin TEXT DEFAULT 'planner',
-                    parent_task_id INTEGER,
-                    latest_query TEXT,
-                    status TEXT NOT NULL,
-                    search_backend TEXT,
-                    attempt_count INTEGER DEFAULT 0,
-                    evidence_count INTEGER DEFAULT 0,
-                    top_score DOUBLE PRECISION DEFAULT 0.0,
-                    summary TEXT,
-                    sources_summary TEXT,
-                    note_id TEXT,
-                    created_at TIMESTAMPTZ NOT NULL
-                )
-                """
-            )
-            connection.execute(
-                """
-                CREATE TABLE IF NOT EXISTS semantic_facts (
-                    fact_id TEXT PRIMARY KEY,
-                    run_id TEXT NOT NULL,
-                    topic TEXT NOT NULL,
-                    scope TEXT,
-                    subject TEXT,
-                    fact TEXT NOT NULL,
-                    embedding vector,
-                    memory_scope TEXT NOT NULL DEFAULT 'profile',
-                    stability_score DOUBLE PRECISION DEFAULT 0.0,
-                    sensitivity TEXT NOT NULL DEFAULT 'medium',
-                    source_session_id TEXT,
-                    confidence DOUBLE PRECISION DEFAULT 0.0,
-                    created_at TIMESTAMPTZ NOT NULL,
-                    last_verified_at TIMESTAMPTZ NOT NULL
-                )
-                """
-            )
-            connection.execute(
-                "ALTER TABLE research_sessions ADD COLUMN IF NOT EXISTS working_memory_summary TEXT"
-            )
-            connection.execute(
-                "ALTER TABLE task_memories ADD COLUMN IF NOT EXISTS round_id INTEGER DEFAULT 1"
-            )
-            connection.execute(
-                "ALTER TABLE task_memories ADD COLUMN IF NOT EXISTS origin TEXT DEFAULT 'planner'"
-            )
-            connection.execute(
-                "ALTER TABLE task_memories ADD COLUMN IF NOT EXISTS parent_task_id INTEGER"
-            )
-            connection.execute(
-                "ALTER TABLE semantic_facts ADD COLUMN IF NOT EXISTS memory_scope TEXT NOT NULL DEFAULT 'profile'"
-            )
-            connection.execute(
-                "ALTER TABLE semantic_facts ALTER COLUMN memory_scope SET DEFAULT 'profile'"
-            )
-            connection.execute(
-                "ALTER TABLE semantic_facts ADD COLUMN IF NOT EXISTS stability_score DOUBLE PRECISION DEFAULT 0.0"
-            )
-            connection.execute(
-                "ALTER TABLE semantic_facts ADD COLUMN IF NOT EXISTS sensitivity TEXT NOT NULL DEFAULT 'medium'"
-            )
-            connection.execute(
-                "ALTER TABLE semantic_facts ADD COLUMN IF NOT EXISTS source_session_id TEXT"
-            )
-            connection.execute(
-                """
-                CREATE INDEX IF NOT EXISTS idx_session_turns_session_created
-                ON session_turns (session_id, created_at DESC)
-                """
-            )
-            connection.execute(
-                """
-                CREATE INDEX IF NOT EXISTS idx_research_runs_session_started
-                ON research_runs (session_id, started_at DESC)
-                """
-            )
-            connection.execute(
-                """
-                CREATE INDEX IF NOT EXISTS idx_task_memories_run_created
-                ON task_memories (run_id, created_at DESC)
-                """
-            )
-            connection.execute(
-                """
-                CREATE INDEX IF NOT EXISTS idx_semantic_facts_scope_verified
-                ON semantic_facts (memory_scope, last_verified_at DESC)
-                """
-            )
-            connection.execute(
-                """
-                UPDATE semantic_facts
-                SET memory_scope = %s
-                WHERE memory_scope IS NULL OR memory_scope = ''
-                """,
-                (PROFILE_MEMORY_SCOPE,),
-            )
-            connection.execute(
-                """
-                UPDATE semantic_facts
-                SET stability_score = COALESCE(stability_score, confidence, 0.0)
-                WHERE stability_score IS NULL OR stability_score = 0.0
-                """
-            )
-            connection.execute(
-                """
-                UPDATE semantic_facts
-                SET sensitivity = %s
-                WHERE sensitivity IS NULL OR sensitivity = ''
-                """,
-                (MEDIUM_SENSITIVITY,),
-            )
-            connection.execute(
-                """
-                UPDATE semantic_facts sf
-                SET source_session_id = rr.session_id
-                FROM research_runs rr
-                WHERE rr.run_id = sf.run_id
-                  AND (sf.source_session_id IS NULL OR sf.source_session_id = '')
-                """
-            )
-            connection.commit()
-
-    def start_run(self, session_id: str, topic: str) -> str:
-        """Create a structured run record and return its run_id."""
-
-        run_id = uuid4().hex
-        started_at = datetime.now(timezone.utc).isoformat()
-
-        with self._connect() as connection:
-            connection.execute(
-                """
-                INSERT INTO research_runs (
-                    run_id,
-                    session_id,
-                    topic,
-                    started_at
-                ) VALUES (%s, %s, %s, %s)
-                """,
-                (run_id, session_id, topic, started_at),
-            )
-            connection.execute(
-                """
-                UPDATE research_sessions
-                SET updated_at = %s,
-                    last_run_id = %s
-                WHERE session_id = %s
-                """,
-                (started_at, run_id, session_id),
-            )
-            connection.commit()
-
-        return run_id
-
-    def save_task_log(self, run_id: str, task: TodoItem) -> None:
-        """Persist a task-level audit log record for the current run."""
-
-        created_at = datetime.now(timezone.utc).isoformat()
-
-        with self._connect() as connection:
-            connection.execute(
-                """
-                INSERT INTO task_memories (
-                    run_id,
-                    task_id,
-                    title,
-                    intent,
-                    query,
-                    round_id,
-                    origin,
-                    parent_task_id,
-                    latest_query,
-                    status,
-                    search_backend,
-                    attempt_count,
-                    evidence_count,
-                    top_score,
-                    summary,
-                    sources_summary,
-                    note_id,
-                    created_at
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                """,
-                (
-                    run_id,
-                    task.id,
-                    task.title,
-                    task.intent,
-                    task.query,
-                    task.round_id,
-                    task.origin,
-                    task.parent_task_id,
-                    task.latest_query,
-                    task.status,
-                    task.search_backend,
-                    task.attempt_count,
-                    task.evidence_count,
-                    task.top_score,
-                    task.summary,
-                    task.sources_summary,
-                    task.note_id,
-                    created_at,
-                ),
-            )
-            self._prune_task_logs(connection, run_id)
-            connection.commit()
-
-    def save_report_memory(self, run_id: str, state: SummaryState, report: str) -> None:
-        """Persist the final report and run-level summary information."""
-
-        finished_at = datetime.now(timezone.utc).isoformat()
-        task_count = len(state.todo_items)
-
-        with self._connect() as connection:
-            connection.execute(
-                """
-                UPDATE research_runs
-                SET finished_at = %s,
-                    final_report = %s,
-                    report_note_id = %s,
-                    task_count = %s
-                WHERE run_id = %s
-                """,
-                (
-                    finished_at,
-                    report,
-                    state.report_note_id,
-                    task_count,
-                    run_id,
-                ),
-            )
-            connection.commit()
-
-    def get_or_create_session(self, session_id: str | None, topic: str) -> str:
-        """Return an existing session_id or create a new research session."""
-
-        now = datetime.now(timezone.utc).isoformat()
-        resolved_session_id = session_id or uuid4().hex
-
-        with self._connect() as connection:
-            existing = connection.execute(
-                """
-                SELECT session_id
-                FROM research_sessions
-                WHERE session_id = %s
-                """,
-                (resolved_session_id,),
-            ).fetchone()
-
-            if existing:
-                connection.execute(
-                    """
-                    UPDATE research_sessions
-                    SET updated_at = %s
-                    WHERE session_id = %s
-                    """,
-                    (now, resolved_session_id),
-                )
-            else:
-                connection.execute(
-                    """
-                    INSERT INTO research_sessions (
-                        session_id,
-                        topic,
-                        created_at,
-                        updated_at
-                    ) VALUES (%s, %s, %s, %s)
-                    """,
-                    (resolved_session_id, topic, now, now),
-                )
-            connection.commit()
-
-        return resolved_session_id
-
-    def load_recent_task_logs(
-        self,
-        session_id: str | None,
-        *,
-        exclude_run_id: str | None = None,
-        limit: int = 5,
-    ) -> list[dict[str, Any]]:
-        """Load recent task-log rows for explicit history-recall flows."""
-
-        if not session_id or limit <= 0:
-            return []
-
-        with self._connect() as connection:
-            sql = """
-                SELECT tm.run_id, tm.task_id, tm.title, tm.status, tm.summary, tm.created_at
-                FROM task_memories tm
-                JOIN research_runs rr ON rr.run_id = tm.run_id
-                WHERE rr.session_id = %s
-            """
-            params: list[Any] = [session_id]
-            if exclude_run_id:
-                sql += " AND tm.run_id != %s"
-                params.append(exclude_run_id)
-            sql += " ORDER BY tm.created_at DESC, tm.id DESC LIMIT %s"
-            params.append(limit)
-
-            rows = connection.execute(sql, params).fetchall()
-
-        return [
-            {
-                "run_id": row["run_id"],
-                "task_id": row["task_id"],
-                "title": row["title"],
-                "status": row["status"],
-                "summary": row["summary"],
-                "created_at": row["created_at"],
-            }
-            for row in rows
-        ]
-
-    def save_session_turn(
-        self,
-        state: SummaryState,
-        assistant_response: str,
-    ) -> None:
-        """Persist one completed user-query/assistant-response turn."""
-
-        if not state.session_id or not state.run_id or not state.research_topic:
-            return
-
-        created_at = datetime.now(timezone.utc).isoformat()
-        with self._connect() as connection:
-            connection.execute(
-                """
-                INSERT INTO session_turns (
-                    turn_id,
-                    session_id,
-                    run_id,
-                    user_query,
-                    assistant_response,
-                    response_mode,
-                    created_at
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s)
-                """,
-                (
-                    uuid4().hex,
-                    state.session_id,
-                    state.run_id,
-                    state.research_topic,
-                    assistant_response,
-                    state.response_mode,
-                    created_at,
-                ),
-            )
-            connection.commit()
-
-    def refresh_working_memory(
-        self,
-        session_id: str | None,
-    ) -> dict[str, Any]:
-        """Refresh compact working memory for one session and return the latest view."""
-
-        if not session_id:
-            return {"working_memory_summary": "", "recent_turns": []}
-
-        with self._connect() as connection:
-            session_row = connection.execute(
-                """
-                SELECT topic
-                FROM research_sessions
-                WHERE session_id = %s
-                """,
-                (session_id,),
-            ).fetchone()
-            session_topic = str((session_row or {}).get("topic") or "").strip()
-            rows = connection.execute(
-                """
-                SELECT run_id, user_query, assistant_response, response_mode, created_at
-                FROM session_turns
-                WHERE session_id = %s
-                ORDER BY created_at DESC
-                LIMIT %s
-                """,
-                (session_id, WORKING_MEMORY_HISTORY_LIMIT),
-            ).fetchall()
-
-            recent_turn_rows = rows[:WORKING_MEMORY_RECENT_TURN_LIMIT]
-            older_turn_rows = list(reversed(rows[WORKING_MEMORY_RECENT_TURN_LIMIT:]))
-            working_memory_summary = self.build_working_memory_summary(
-                session_topic=session_topic,
-                older_turns=older_turn_rows,
-            )
-            connection.execute(
-                """
-                UPDATE research_sessions
-                SET working_memory_summary = %s,
-                    updated_at = %s
-                WHERE session_id = %s
-                """,
-                (
-                    working_memory_summary,
-                    datetime.now(timezone.utc).isoformat(),
-                    session_id,
-                ),
-            )
-            connection.commit()
-
-        return {
-            "working_memory_summary": working_memory_summary,
-            "recent_turns": [
-                {
-                    "run_id": row["run_id"],
-                    "user_query": row["user_query"],
-                    "assistant_response": row["assistant_response"],
-                    "response_mode": row["response_mode"],
-                    "created_at": row["created_at"],
-                }
-                for row in recent_turn_rows
-            ],
-        }
-
-    # 给当前 topic 准备一包“默认可注入”的历史上下文，供后面的 planner / reviewer / direct answer 使用。
-    def load_relevant_context(
-        self,
         session_id: str | None,
         topic: str,
-        *,
-        exclude_run_id: str | None = None,
-    ) -> dict[str, Any]:
-        """Load recalled memory context for a new topic."""
-
-        working_memory_summary = ""
-        recent_turns: list[dict[str, Any]] = []
-        profile_facts: list[dict[str, Any]] = []
-        global_facts: list[dict[str, Any]] = []
-
-        with self._connect() as connection:
-            if session_id:
-                working_memory_row = connection.execute(
-                    """
-                    SELECT working_memory_summary
-                    FROM research_sessions
-                    WHERE session_id = %s
-                    """,
-                    (session_id,),
-                ).fetchone()
-                working_memory_summary = str(
-                    (working_memory_row or {}).get("working_memory_summary") or ""
-                ).strip()
-
-            profile_candidates: list[dict[str, Any]] = []
-            global_candidates: list[dict[str, Any]] = []
-            if session_id:
-                turn_rows = connection.execute(
-                    """
-                    SELECT run_id, user_query, assistant_response, response_mode, created_at
-                    FROM session_turns
-                    WHERE session_id = %s
-                    ORDER BY created_at DESC
-                    LIMIT %s
-                    """,
-                    (session_id, WORKING_MEMORY_RECENT_TURN_LIMIT),
-                ).fetchall()
-                recent_turns = [
-                    {
-                        "run_id": row["run_id"],
-                        "user_query": row["user_query"],
-                        "assistant_response": row["assistant_response"],
-                        "response_mode": row["response_mode"],
-                        "created_at": row["created_at"],
-                    }
-                    for row in turn_rows
-                ]
-            profile_candidates = self._search_semantic_facts(
-                connection,
-                topic,
-                memory_scope=PROFILE_MEMORY_SCOPE,
-                limit=MEMORY_CANDIDATE_LIMIT,
-            )
-            global_candidates = self._search_semantic_facts(
-                connection,
-                topic,
-                memory_scope=GLOBAL_MEMORY_SCOPE,
-                limit=MEMORY_CANDIDATE_LIMIT,
-            )
-            profile_facts = self._sorted_fact_candidates(profile_candidates)[:MEMORY_RESULT_LIMIT]
-            global_facts = self._sorted_fact_candidates(global_candidates)[:MEMORY_RESULT_LIMIT]
-
-        return {
-            "working_memory_summary": working_memory_summary,
-            "recent_turns": recent_turns,
-            "profile_facts": profile_facts,
-            "global_facts": global_facts,
-        }
-
-    def _prune_task_logs(self, connection: Any, run_id: str) -> None:
-        """Keep task-log retention bounded per session."""
-
-        retention = max(0, int(self._config.task_log_retention_per_session))
-        if retention <= 0:
-            return
-
-        row = connection.execute(
-            """
-            SELECT session_id
-            FROM research_runs
-            WHERE run_id = %s
-            """,
-            (run_id,),
-        ).fetchone()
-        session_id = str((row or {}).get("session_id") or "").strip()
-        if not session_id:
-            return
-
-        connection.execute(
-            """
-            DELETE FROM task_memories
-            WHERE id IN (
-                SELECT tm.id
-                FROM task_memories tm
-                JOIN research_runs rr ON rr.run_id = tm.run_id
-                WHERE rr.session_id = %s
-                ORDER BY tm.created_at DESC, tm.id DESC
-                OFFSET %s
-            )
-            """,
-            (session_id, retention),
-        )
-
-    def _search_semantic_facts(
-        self,
-        connection: Any,
-        topic: str,
-        *,
-        run_ids: list[str] | None = None,
-        memory_scope: str | None = None,
-        limit: int = MEMORY_RESULT_LIMIT,
     ) -> list[dict[str, Any]]:
-        """Retrieve the most relevant semantic facts for the current topic."""
+        candidates: list[Path] = []
+        if session_id:
+            direct = self._project_dir(session_id)
+            if direct.exists():
+                candidates.append(direct)
 
-        embedding_results = self._search_semantic_facts_by_embedding(
-            connection,
-            topic,
-            run_ids=run_ids,
-            memory_scope=memory_scope,
-            limit=limit,
-        )
-        if embedding_results:
-            return embedding_results
+        if not candidates:
+            candidates.extend(self._recent_project_dirs(limit=5))
 
-        tokens = re.findall(
-            r"[\u4e00-\u9fff]{2,}|[A-Za-z0-9][A-Za-z0-9_-]{1,}", topic or ""
-        )
-        deduped: list[str] = []
-        for token in tokens:
-            normalized = token.strip()
-            if normalized and normalized not in deduped:
-                deduped.append(normalized)
-        if not deduped:
-            return []
-
-        token_clauses: list[str] = []
-        params: list[Any] = []
-        for token in deduped[:6]:
-            pattern = f"%{token}%"
-            token_clauses.append(
-                "(topic ILIKE %s OR COALESCE(subject, '') ILIKE %s OR fact ILIKE %s)"
-            )
-            params.extend([pattern, pattern, pattern])
-
-        where_clauses = [f"({' OR '.join(token_clauses)})"]
-        if memory_scope:
-            where_clauses.append("memory_scope = %s")
-            params.append(memory_scope)
-        if run_ids:
-            where_clauses.append("run_id = ANY(%s)")
-            params.append(run_ids)
-
-        rows = connection.execute(
-            f"""
-            SELECT fact_id, run_id, topic, scope, subject, fact, confidence,
-                   stability_score, sensitivity, memory_scope, source_session_id,
-                   last_verified_at
-            FROM semantic_facts
-            WHERE {' AND '.join(where_clauses)}
-            ORDER BY confidence DESC, last_verified_at DESC
-            LIMIT %s
-            """,
-            params + [limit],
-        ).fetchall()
-
-        return [
-            {
-                "fact_id": row["fact_id"],
-                "run_id": row["run_id"],
-                "topic": row["topic"],
-                "scope": row["scope"],
-                "subject": row["subject"],
-                "fact": row["fact"],
-                "confidence": row["confidence"],
-                "stability_score": row["stability_score"],
-                "sensitivity": row["sensitivity"],
-                "memory_scope": row["memory_scope"],
-                "source_session_id": row["source_session_id"],
-                "last_verified_at": row["last_verified_at"],
-            }
-            for row in rows
-        ]
-
-    def _search_semantic_facts_by_embedding(
-        self,
-        connection: Any,
-        topic: str,
-        *,
-        run_ids: list[str] | None = None,
-        memory_scope: str | None = None,
-        limit: int = MEMORY_RESULT_LIMIT,
-    ) -> list[dict[str, Any]]:
-        """Retrieve semantic facts by vector similarity inside PostgreSQL."""
-
-        query_embedding = self._embed_query(topic)
-        if not query_embedding:
-            return []
-
-        vector_literal = self._vector_literal(query_embedding)
-        where_clauses = ["embedding IS NOT NULL"]
-        params: list[Any] = [vector_literal]
-        if memory_scope:
-            where_clauses.append("memory_scope = %s")
-            params.append(memory_scope)
-        if run_ids:
-            where_clauses.append("run_id = ANY(%s)")
-            params.append(run_ids)
-        params.append(vector_literal)
-
-        rows = connection.execute(
-            f"""
-            SELECT fact_id, run_id, topic, scope, subject, fact, confidence, stability_score,
-                   sensitivity, memory_scope, source_session_id, last_verified_at,
-                   1 - (embedding <=> %s::vector) AS similarity
-            FROM semantic_facts
-            WHERE {' AND '.join(where_clauses)}
-            ORDER BY embedding <=> %s::vector ASC, confidence DESC
-            LIMIT %s
-            """,
-            params + [limit],
-        ).fetchall()
-
-        return [
-            {
-                "fact_id": row["fact_id"],
-                "run_id": row["run_id"],
-                "topic": row["topic"],
-                "scope": row["scope"],
-                "subject": row["subject"],
-                "fact": row["fact"],
-                "confidence": row["confidence"],
-                "stability_score": row["stability_score"],
-                "sensitivity": row["sensitivity"],
-                "memory_scope": row["memory_scope"],
-                "source_session_id": row["source_session_id"],
-                "last_verified_at": row["last_verified_at"],
-                "similarity": row["similarity"],
-            }
-            for row in rows
-        ]
-
-    def save_semantic_facts(
-        self,
-        run_id: str,
-        topic: str,
-        facts: list[dict[str, Any]],
-        *,
-        session_id: str | None = None,
-    ) -> None:
-        """Persist semantic facts into PostgreSQL."""
-
-        if not facts:
-            return
-
-        resolved_session_id = session_id or self._resolve_session_id_for_run(run_id)
-        now = datetime.now(timezone.utc).isoformat()
-        prepared_facts = [
-            self._prepare_semantic_fact(
-                topic,
-                item,
-                session_id=resolved_session_id,
-            )
-            for item in facts
-            if str(item.get("fact") or "").strip()
-        ]
-        embedding_inputs = [
-            f"{topic}\n{item.get('subject') or ''}\n{item.get('fact') or ''}".strip()
-            for item in prepared_facts
-        ]
-        embeddings = self._embed_texts(embedding_inputs)
-
-        with self._connect() as connection:
-            for idx, item in enumerate(prepared_facts):
-                embedding_vector = None
-                if idx < len(embeddings):
-                    embedding_vector = self._vector_literal(embeddings[idx])
-                existing = self._find_existing_fact(
-                    connection,
-                    fact=item,
-                    session_id=resolved_session_id,
-                )
-                if existing:
-                    update_params: list[Any] = [
-                        run_id,
-                        topic,
-                        item.get("scope"),
-                        item.get("subject"),
-                        item.get("fact"),
+        topic_terms = self._terms(topic)
+        summaries: list[dict[str, Any]] = []
+        for project_dir in candidates:
+            status = self._read_status(project_dir)
+            if not status:
+                continue
+            if topic_terms and project_dir not in candidates[:1]:
+                searchable = " ".join(
+                    [
+                        str(status.get("topic") or ""),
+                        str(status.get("selected_idea") or ""),
+                        str(status.get("next_action") or ""),
                     ]
-                    set_clauses = [
-                        "run_id = %s",
-                        "topic = %s",
-                        "scope = %s",
-                        "subject = %s",
-                        "fact = %s",
-                    ]
-                    if embedding_vector is not None:
-                        set_clauses.append("embedding = %s::vector")
-                        update_params.append(embedding_vector)
-                    set_clauses.extend(
-                        [
-                            "memory_scope = %s",
-                            "stability_score = GREATEST(COALESCE(stability_score, 0.0), %s)",
-                            "sensitivity = %s",
-                            "source_session_id = COALESCE(source_session_id, %s)",
-                            "confidence = GREATEST(COALESCE(confidence, 0.0), %s)",
-                            "last_verified_at = %s",
-                        ]
-                    )
-                    update_params.extend(
-                        [
-                            item.get("memory_scope"),
-                            float(item.get("stability_score", 0.0) or 0.0),
-                            item.get("sensitivity"),
-                            resolved_session_id,
-                            float(item.get("confidence", 0.0) or 0.0),
-                            now,
-                            existing["fact_id"],
-                        ]
-                    )
-                    connection.execute(
-                        f"""
-                        UPDATE semantic_facts
-                        SET {', '.join(set_clauses)}
-                        WHERE fact_id = %s
-                        """,
-                        update_params,
-                    )
+                ).lower()
+                if not any(term in searchable for term in topic_terms):
                     continue
+            summaries.append(self._summarize_project(project_dir, status))
+            if len(summaries) >= 3:
+                break
+        return summaries
 
-                fact_id = uuid4().hex
-                if embedding_vector is not None:
-                    connection.execute(
-                        """
-                        INSERT INTO semantic_facts (
-                            fact_id,
-                            run_id,
-                            topic,
-                            scope,
-                            subject,
-                            fact,
-                            embedding,
-                            memory_scope,
-                            stability_score,
-                            sensitivity,
-                            source_session_id,
-                            confidence,
-                            created_at,
-                            last_verified_at
-                        ) VALUES (%s, %s, %s, %s, %s, %s, %s::vector, %s, %s, %s, %s, %s, %s, %s)
-                        """,
-                        (
-                            fact_id,
-                            run_id,
-                            topic,
-                            item.get("scope"),
-                            item.get("subject"),
-                            item.get("fact"),
-                            embedding_vector,
-                            item.get("memory_scope"),
-                            float(item.get("stability_score", 0.0) or 0.0),
-                            item.get("sensitivity"),
-                            resolved_session_id,
-                            float(item.get("confidence", 0.0) or 0.0),
-                            now,
-                            now,
-                        ),
-                    )
-                else:
-                    connection.execute(
-                        """
-                        INSERT INTO semantic_facts (
-                            fact_id,
-                            run_id,
-                            topic,
-                            scope,
-                            subject,
-                            fact,
-                            embedding,
-                            memory_scope,
-                            stability_score,
-                            sensitivity,
-                            source_session_id,
-                            confidence,
-                            created_at,
-                            last_verified_at
-                        ) VALUES (%s, %s, %s, %s, %s, %s, NULL, %s, %s, %s, %s, %s, %s, %s)
-                        """,
-                        (
-                            fact_id,
-                            run_id,
-                            topic,
-                            item.get("scope"),
-                            item.get("subject"),
-                            item.get("fact"),
-                            item.get("memory_scope"),
-                            float(item.get("stability_score", 0.0) or 0.0),
-                            item.get("sensitivity"),
-                            resolved_session_id,
-                            float(item.get("confidence", 0.0) or 0.0),
-                            now,
-                            now,
-                        ),
-                    )
-            connection.commit()
+    def _recent_project_dirs(self, *, limit: int) -> list[Path]:
+        if not self._root.exists():
+            return []
+        dirs = [
+            item
+            for item in self._root.iterdir()
+            if item.is_dir() and (item / self.STATUS_FILE).exists()
+        ]
+        return sorted(dirs, key=lambda path: path.stat().st_mtime, reverse=True)[:limit]
 
-    def _resolve_session_id_for_run(self, run_id: str) -> str | None:
-        """Look up the session owning a given run."""
+    def _project_dir(self, project_id: str) -> Path:
+        safe_id = "".join(ch if ch.isalnum() or ch in "._-" else "-" for ch in project_id).strip(".-")
+        if not safe_id:
+            safe_id = "unknown-project"
+        path = (self._root / safe_id).resolve()
+        if self._root not in {path, *path.parents}:
+            raise ValueError("project id resolved outside workspace root")
+        return path
 
-        with self._connect() as connection:
-            row = connection.execute(
-                "SELECT session_id FROM research_runs WHERE run_id = %s",
-                (run_id,),
-            ).fetchone()
-        if not row:
-            return None
-        return str(row["session_id"] or "").strip() or None
+    def _read_status_for_project(self, project_id: str) -> dict[str, Any] | None:
+        project_dir = self._project_dir(project_id)
+        return self._read_status(project_dir)
 
-    def _find_existing_fact(
-        self,
-        connection: Any,
-        *,
-        fact: dict[str, Any],
-        session_id: str | None,
-    ) -> dict[str, Any] | None:
-        """Find an existing fact row for minimal deduplication."""
-
-        memory_scope = str(fact.get("memory_scope") or PROFILE_MEMORY_SCOPE)
-        subject = str(fact.get("subject") or "").strip()
-        fact_text = str(fact.get("fact") or "").strip()
-        if not fact_text:
+    def _read_status(self, project_dir: Path) -> dict[str, Any] | None:
+        status_path = project_dir / self.STATUS_FILE
+        try:
+            return json.loads(status_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
             return None
 
-        return connection.execute(
-            """
-            SELECT fact_id
-            FROM semantic_facts
-            WHERE memory_scope = %s
-              AND COALESCE(subject, '') = %s
-              AND fact = %s
-            LIMIT 1
-            """,
-            (memory_scope, subject, fact_text),
-        ).fetchone()
+    def _summarize_project(self, project_dir: Path, status: dict[str, Any]) -> dict[str, Any]:
+        project_id = str(status.get("project_id") or project_dir.name)
+        topic = str(status.get("topic") or "")
+        stage = str(status.get("stage") or "unknown")
+        selected_idea = str(status.get("selected_idea") or "")
+        next_action = str(status.get("next_action") or "")
+        active_tasks = [
+            str(item)
+            for item in (status.get("active_tasks") or [])
+            if str(item).strip()
+        ][:5]
+        files = self._available_memory_files(project_dir)
+        summary_parts = [
+            f"项目 {project_id}",
+            f"主题：{topic}" if topic else "",
+            f"阶段：{stage}",
+            f"选中方向：{selected_idea}" if selected_idea else "",
+            f"下一步：{next_action}" if next_action else "",
+        ]
+        if active_tasks:
+            summary_parts.append("当前任务：" + "；".join(active_tasks))
+        if files:
+            summary_parts.append("可恢复文件：" + "、".join(files))
 
-    def _vector_literal(self, values: list[float]) -> str:
-        """Serialize a Python embedding list into pgvector text format."""
+        return {
+            "project_id": project_id,
+            "topic": topic,
+            "stage": stage,
+            "selected_idea": selected_idea,
+            "next_action": next_action,
+            "active_tasks": active_tasks,
+            "root_path": str(project_dir),
+            "summary": "；".join(part for part in summary_parts if part),
+        }
 
-        return "[" + ",".join(format(float(value), ".9g") for value in values) + "]"
+    def _available_memory_files(self, project_dir: Path) -> list[str]:
+        relative_paths = [
+            "CLAUDE.md",
+            "IDEA_REPORT.md",
+            "IDEA_CANDIDATES.md",
+            "docs/research_contract.md",
+            "REVIEW_STATE.json",
+            "AUTO_REVIEW.md",
+            "refine-logs/REVISION_PLAN.md",
+            "refine-logs/EXPERIMENT_TRACKER.md",
+            "EXPERIMENT_LOG.md",
+            "findings.md",
+        ]
+        return [relative for relative in relative_paths if (project_dir / relative).exists()]
+
+    def _format_working_memory(self, project_summaries: list[dict[str, Any]]) -> str:
+        if not project_summaries:
+            return ""
+        lines = ["项目工作区记忆："]
+        for idx, item in enumerate(project_summaries, start=1):
+            lines.append(f"{idx}. {item['summary']}")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _terms(text: str) -> list[str]:
+        normalized = (text or "").lower()
+        terms = [
+            token.strip()
+            for token in normalized.replace("（", " ").replace("）", " ").split()
+            if len(token.strip()) >= 2
+        ]
+        return terms[:8]
+
+
+def create_memory_service(config: Configuration) -> FileMemoryService:
+    """Return ARIS-style file memory."""
+
+    return FileMemoryService(config)
