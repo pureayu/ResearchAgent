@@ -130,6 +130,27 @@ class FileMemoryServiceTests(unittest.TestCase):
                 "这里记录了端侧大模型推理、手机 NPU、KV cache 优化方向。",
                 encoding="utf-8",
             )
+            (Path(tmp) / "PROJECT_INDEX.md").write_text(
+                """# Project Index
+
+## Diffusion image project
+
+- project_id: unrelated
+- description: A project about image generation.
+- topic: 图像生成
+- stage: done
+- selected_idea: TBD
+
+## Mobile LLM inference
+
+- project_id: mobile-llm
+- description: 手机端 NPU KV cache 和 speculative decoding 调研资料
+- topic: 端侧推理
+- stage: human_gate
+- selected_idea: TBD
+""",
+                encoding="utf-8",
+            )
 
             service = FileMemoryService(Configuration(project_workspace_root=tmp))
             context = service.load_relevant_context(None, "手机端大模型推理 NPU 方向")
@@ -137,6 +158,46 @@ class FileMemoryServiceTests(unittest.TestCase):
         self.assertEqual(context["project_memory"][0]["project_id"], "mobile-llm")
         self.assertIn("Mobile LLM inference", context["working_memory_summary"])
         self.assertNotIn("Diffusion image project", context["working_memory_summary"])
+
+    def test_workspace_index_controls_first_stage_recall(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            hidden = Path(tmp) / "hidden-mobile"
+            hidden.mkdir(parents=True)
+            (hidden / "PROJECT_STATUS.json").write_text(
+                json.dumps(
+                    {
+                        "project_id": "hidden-mobile",
+                        "topic": "手机端推理",
+                        "name": "Hidden mobile project",
+                        "description": "手机端 NPU 长上下文资料",
+                        "stage": "done",
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            (hidden / "IDEA_REPORT.md").write_text(
+                "手机端 NPU 长上下文 KV cache",
+                encoding="utf-8",
+            )
+            (Path(tmp) / "PROJECT_INDEX.md").write_text(
+                """# Project Index
+
+## Unrelated indexed project
+
+- project_id: hidden-mobile
+- description: image diffusion only
+- topic: 图像生成
+- stage: done
+- selected_idea: TBD
+""",
+                encoding="utf-8",
+            )
+
+            service = FileMemoryService(Configuration(project_workspace_root=tmp))
+            context = service.load_relevant_context(None, "手机端 NPU")
+
+        self.assertEqual(context["project_memory"], [])
 
 
 if __name__ == "__main__":

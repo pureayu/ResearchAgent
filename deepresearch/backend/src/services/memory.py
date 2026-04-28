@@ -24,6 +24,7 @@ class FileMemoryService:
     """Lightweight memory adapter backed by ARIS-style project files."""
 
     STATUS_FILE = "PROJECT_STATUS.json"
+    WORKSPACE_INDEX_FILE = "PROJECT_INDEX.md"
 
     def __init__(self, config: Configuration) -> None:
         self._config = config
@@ -145,25 +146,36 @@ class FileMemoryService:
         session_id: str | None,
         topic: str,
     ) -> list[dict[str, Any]]:
-        candidates: list[Path] = []
+        direct_project_dir: Path | None = None
         if session_id:
             direct = self._project_dir(session_id)
             if direct.exists():
-                candidates.append(direct)
-
-        candidate_ids = {item.name for item in candidates}
-        for project_dir in self._recent_project_dirs(limit=20):
-            if project_dir.name not in candidate_ids:
-                candidates.append(project_dir)
-                candidate_ids.add(project_dir.name)
-
+                direct_project_dir = direct
         topic_terms = self._terms(topic)
+
+        # Stage 1: rank only the lightweight root PROJECT_INDEX.md entries.
+        workspace_index_entries = self._load_workspace_index_entries()
+        ranked_index_entries = self._rank_workspace_index_entries(
+            workspace_index_entries,
+            topic_terms=topic_terms,
+            direct_project_id=direct_project_dir.name if direct_project_dir else None,
+        )
+        candidate_dirs = self._candidate_dirs_from_index(ranked_index_entries, limit=8)
+
+        # Backward-compatible fallback for old workspaces without a root index.
+        if not workspace_index_entries and not candidate_dirs:
+            candidate_dirs = self._recent_project_dirs(limit=8)
+
+        if direct_project_dir and direct_project_dir not in candidate_dirs:
+            candidate_dirs.insert(0, direct_project_dir)
+
+        # Stage 2: load real project files only for the coarse-ranked candidates.
         ranked: list[tuple[int, float, dict[str, Any]]] = []
-        for project_dir in candidates:
+        for project_dir in candidate_dirs:
             status = self._read_status(project_dir)
             if not status:
                 continue
-            is_direct = bool(session_id and project_dir == self._project_dir(session_id))
+            is_direct = bool(direct_project_dir and project_dir == direct_project_dir)
             search_blob = self._project_search_blob(project_dir, status)
             score = self._match_score(search_blob, topic_terms)
             if topic_terms and not is_direct and score <= 0:
@@ -173,6 +185,79 @@ class FileMemoryService:
         ranked.sort(key=lambda item: (item[0], item[1]), reverse=True)
         summaries = [item[2] for item in ranked[:3]]
         return summaries
+
+    def _rank_workspace_index_entries(
+        self,
+        entries: list[dict[str, str]],
+        *,
+        topic_terms: list[str],
+        direct_project_id: str | None,
+    ) -> list[tuple[int, float, dict[str, str]]]:
+        ranked: list[tuple[int, float, dict[str, str]]] = []
+        for entry in entries:
+            project_id = entry.get("project_id", "")
+            searchable = "\n".join(
+                [
+                    entry.get("name", ""),
+                    entry.get("description", ""),
+                    entry.get("topic", ""),
+                    entry.get("selected_idea", ""),
+                ]
+            ).lower()
+            is_direct = bool(direct_project_id and project_id == direct_project_id)
+            score = self._match_score(searchable, topic_terms)
+            if topic_terms and not is_direct and score <= 0:
+                continue
+            ranked.append((1 if is_direct else 0, score, entry))
+        ranked.sort(key=lambda item: (item[0], item[1]), reverse=True)
+        return ranked
+
+    def _candidate_dirs_from_index(
+        self,
+        ranked_entries: list[tuple[int, float, dict[str, str]]],
+        *,
+        limit: int,
+    ) -> list[Path]:
+        candidate_dirs: list[Path] = []
+        seen: set[str] = set()
+        for _, _, entry in ranked_entries:
+            project_id = entry.get("project_id", "").strip()
+            if not project_id or project_id in seen:
+                continue
+            project_dir = self._project_dir(project_id)
+            if not project_dir.exists():
+                continue
+            candidate_dirs.append(project_dir)
+            seen.add(project_id)
+            if len(candidate_dirs) >= limit:
+                break
+        return candidate_dirs
+
+    def _load_workspace_index_entries(self) -> list[dict[str, str]]:
+        index_path = self._root / self.WORKSPACE_INDEX_FILE
+        try:
+            text = index_path.read_text(encoding="utf-8")
+        except OSError:
+            return []
+
+        entries: list[dict[str, str]] = []
+        current: dict[str, str] | None = None
+        for raw_line in text.splitlines():
+            line = raw_line.strip()
+            if line.startswith("## "):
+                if current:
+                    entries.append(current)
+                current = {"name": line.removeprefix("## ").strip()}
+                continue
+            if current is None or not line.startswith("- "):
+                continue
+            key, separator, value = line[2:].partition(":")
+            if not separator:
+                continue
+            current[key.strip()] = value.strip()
+        if current:
+            entries.append(current)
+        return entries
 
     def _recent_project_dirs(self, *, limit: int) -> list[Path]:
         if not self._root.exists():
